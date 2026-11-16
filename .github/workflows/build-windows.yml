@@ -24,16 +24,13 @@ jobs:
         with:
           workspaces: src-tauri
 
-      - name: Install Tauri CLI
+      - name: Install Tauri CLI (prebuilt)
         shell: pwsh
-        run: |
-          if (-not (Get-Command cargo-tauri -ErrorAction SilentlyContinue)) {
-            cargo install tauri-cli --version "^2.0.0" --locked
-          }
+        run: npm install -g @tauri-apps/cli@^2
 
       - name: Build Tauri Windows app (NSIS)
         shell: pwsh
-        run: cargo tauri build
+        run: tauri build
 
       - name: List generated binaries
         shell: pwsh
