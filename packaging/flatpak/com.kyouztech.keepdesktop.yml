@@ -1,6 +1,6 @@
 id: com.kyouztech.keepdesktop
 runtime: org.gnome.Platform
-runtime-version: '47'
+runtime-version: '49'
 sdk: org.gnome.Sdk
 command: keep-desktop
 

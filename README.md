@@ -132,7 +132,7 @@ sudo apt install ./Google.Keep_<versao>_amd64.deb
 flatpak install --user ./Google.Keep_<versao>_x86_64.flatpak
 flatpak run com.kyouztech.keepdesktop
 ```
-*(Caso ainda não tenha o runtime GNOME 47 configurado no Flathub: `flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo`.)*
+*(Caso ainda não tenha o runtime GNOME 49 configurado no Flathub: `flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo`.)*
 
 ---
 
