@@ -1,22 +1,43 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::{
+    cell::RefCell,
+    sync::atomic::{AtomicBool, Ordering},
+};
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Manager, Url, WebviewWindow, WindowEvent,
+    AppHandle, Manager, Window, WindowEvent,
 };
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
 const KEEP_URL: &str = "https://keep.google.com";
 static ALWAYS_ON_TOP: AtomicBool = AtomicBool::new(false);
 
+thread_local! {
+    static KEEP_CONTEXT: RefCell<Option<wry::WebContext>> = const { RefCell::new(None) };
+    static KEEP_WEBVIEW: RefCell<Option<wry::WebView>> = const { RefCell::new(None) };
+}
+
 fn keep_shortcut() -> Shortcut {
     Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyK)
 }
 
+fn with_keep_webview<F>(window: &Window, f: F)
+where
+    F: FnOnce(&wry::WebView) + Send + 'static,
+{
+    let _ = window.run_on_main_thread(move || {
+        KEEP_WEBVIEW.with(|cell| {
+            if let Some(wv) = cell.borrow().as_ref() {
+                f(wv);
+            }
+        });
+    });
+}
+
 fn toggle_window(app: &AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
+    if let Some(window) = app.get_window("main") {
         let is_visible = window.is_visible().unwrap_or(false);
         let is_minimized = window.is_minimized().unwrap_or(false);
         if is_visible && !is_minimized {
@@ -25,61 +46,30 @@ fn toggle_window(app: &AppHandle) {
             let _ = window.show();
             let _ = window.unminimize();
             let _ = window.set_focus();
+            with_keep_webview(&window, |wv| {
+                let _ = wv.focus();
+            });
         }
     }
 }
 
 #[cfg(target_os = "windows")]
-fn configure_webview_and_navigate(window: &WebviewWindow, target_url: Url) {
+fn configure_windows_profile_and_navigate(webview: &wry::WebView, window: &Window) {
     use webview2_com::{
         ClearBrowsingDataCompletedHandler,
         Microsoft::Web::WebView2::Win32::{
-            ICoreWebView2Profile2, ICoreWebView2Profile3, ICoreWebView2_13, ICoreWebView2_22,
+            ICoreWebView2Profile2, ICoreWebView2Profile3, ICoreWebView2_13,
             COREWEBVIEW2_BROWSING_DATA_KINDS, COREWEBVIEW2_BROWSING_DATA_KINDS_CACHE_STORAGE,
             COREWEBVIEW2_BROWSING_DATA_KINDS_SERVICE_WORKERS,
-            COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_NONE, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL,
-            COREWEBVIEW2_WEB_RESOURCE_REQUEST_SOURCE_KINDS_ALL,
+            COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_NONE,
         },
     };
-    use windows_core::{Interface, HSTRING};
+    use windows_core::Interface;
+    use wry::WebViewExtWindows;
 
-    let nav_window = window.clone();
-    let res = window.with_webview(move |wv| unsafe {
-        let controller = wv.controller();
-        let Ok(webview) = controller.CoreWebView2() else {
-            let _ = nav_window.navigate(target_url);
-            return;
-        };
-
-        // Remove wry's custom-protocol WebResourceRequested filters before loading Keep
-        // to avoid MicrosoftEdge/WebView2Feedback#5764 (Service Workers using
-        // InstallEvent.addRoutes getting stuck in STARTING when any filter is active).
-        let filters = [
-            "http://tauri.localhost/*",
-            "https://tauri.localhost/*",
-            "http://ipc.localhost/*",
-            "https://ipc.localhost/*",
-        ];
-        if let Ok(webview_22) = webview.cast::<ICoreWebView2_22>() {
-            for uri in filters {
-                let filter = HSTRING::from(uri);
-                let _ = webview_22.RemoveWebResourceRequestedFilterWithRequestSourceKinds(
-                    &filter,
-                    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL,
-                    COREWEBVIEW2_WEB_RESOURCE_REQUEST_SOURCE_KINDS_ALL,
-                );
-            }
-        } else {
-            for uri in filters {
-                let filter = HSTRING::from(uri);
-                let _ = webview.RemoveWebResourceRequestedFilter(
-                    &filter,
-                    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL,
-                );
-            }
-        }
-
-        if let Ok(webview_13) = webview.cast::<ICoreWebView2_13>() {
+    let core = webview.webview();
+    unsafe {
+        if let Ok(webview_13) = core.cast::<ICoreWebView2_13>() {
             if let Ok(profile) = webview_13.Profile() {
                 if let Ok(profile_3) = profile.cast::<ICoreWebView2Profile3>() {
                     let _ = profile_3.SetPreferredTrackingPreventionLevel(
@@ -88,16 +78,17 @@ fn configure_webview_and_navigate(window: &WebviewWindow, target_url: Url) {
                 }
 
                 if let Ok(profile_2) = profile.cast::<ICoreWebView2Profile2>() {
-                    // Clear stale/stuck Service Workers and CacheStorage without touching
-                    // cookies or local storage so the active Google session stays logged in.
+                    // Clear potentially stuck Service Workers and CacheStorage from prior builds
+                    // without touching cookies or local storage so the Google session stays active.
                     let data_kinds = COREWEBVIEW2_BROWSING_DATA_KINDS(
                         COREWEBVIEW2_BROWSING_DATA_KINDS_SERVICE_WORKERS.0
                             | COREWEBVIEW2_BROWSING_DATA_KINDS_CACHE_STORAGE.0,
                     );
-                    let callback_window = nav_window.clone();
-                    let callback_url = target_url.clone();
+                    let nav_window = window.clone();
                     let handler = ClearBrowsingDataCompletedHandler::create(Box::new(move |_| {
-                        let _ = callback_window.navigate(callback_url.clone());
+                        with_keep_webview(&nav_window, |wv| {
+                            let _ = wv.load_url(KEEP_URL);
+                        });
                         Ok(())
                     }));
                     if profile_2.ClearBrowsingData(data_kinds, &handler).is_ok() {
@@ -106,20 +97,14 @@ fn configure_webview_and_navigate(window: &WebviewWindow, target_url: Url) {
                 }
             }
         }
-
-        let _ = nav_window.navigate(target_url);
-    });
-
-    if res.is_err() {
-        if let Ok(fallback) = Url::parse(KEEP_URL) {
-            let _ = window.navigate(fallback);
-        }
     }
+
+    let _ = webview.load_url(KEEP_URL);
 }
 
 #[cfg(not(target_os = "windows"))]
-fn configure_webview_and_navigate(window: &WebviewWindow, target_url: Url) {
-    let _ = window.navigate(target_url);
+fn configure_windows_profile_and_navigate(webview: &wry::WebView, _window: &Window) {
+    let _ = webview.load_url(KEEP_URL);
 }
 
 fn main() {
@@ -139,11 +124,57 @@ fn main() {
                 eprintln!("Aviso: não foi possível registrar o atalho Ctrl+Alt+K: {err}");
             }
 
-            if let Some(window) = app.get_webview_window("main") {
-                if let Ok(keep_url) = Url::parse(KEEP_URL) {
-                    configure_webview_and_navigate(&window, keep_url);
-                }
+            // Cria janela nativa Tauri sem WebView Tauri (evita injeção de window.ipc / __TAURI_INTERNALS__
+            // e filtros WebResourceRequested que quebram o bundle Closure do Google Keep)
+            let mut window_builder = Window::builder(app, "main")
+                .title("Google Keep")
+                .inner_size(1100.0, 760.0)
+                .resizable(true)
+                .center();
+
+            if let Some(icon) = app.default_window_icon() {
+                window_builder = window_builder.icon(icon.clone())?;
             }
+
+            let window = window_builder.build()?;
+
+            let data_dir = app.path().app_local_data_dir().ok();
+            let mut web_context = wry::WebContext::new(data_dir);
+
+            let webview = {
+                let mut builder = wry::WebViewBuilder::new_with_web_context(&mut web_context)
+                    .with_background_color((0x20, 0x21, 0x24, 0xff))
+                    .with_devtools(true)
+                    .with_clipboard(true)
+                    .with_new_window_req_handler(|_, _| wry::NewWindowResponse::Allow);
+
+                #[cfg(target_os = "windows")]
+                {
+                    use wry::WebViewBuilderExtWindows;
+                    builder = builder
+                        .with_additional_browser_args(
+                            "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,ServiceWorkerStaticRouter,ThirdPartyStoragePartitioning,TrackingProtection3pcd",
+                        )
+                        .with_url("about:blank");
+                }
+
+                #[cfg(not(target_os = "windows"))]
+                {
+                    builder = builder.with_url(KEEP_URL);
+                }
+
+                builder.build(&window)?
+            };
+
+            KEEP_CONTEXT.with(|cell| {
+                *cell.borrow_mut() = Some(web_context);
+            });
+            KEEP_WEBVIEW.with(|cell| {
+                if cfg!(target_os = "windows") {
+                    configure_windows_profile_and_navigate(&webview, &window);
+                }
+                *cell.borrow_mut() = Some(webview);
+            });
 
             // Cria menu da bandeja do sistema (System Tray)
             let open_item =
@@ -182,24 +213,28 @@ fn main() {
                 .on_menu_event(move |app, event| match event.id.as_ref() {
                     "open" => toggle_window(app),
                     "reload" => {
-                        if let Some(win) = app.get_webview_window("main") {
-                            let _ = win.reload();
+                        if let Some(win) = app.get_window("main") {
+                            with_keep_webview(&win, |wv| {
+                                let _ = wv.reload();
+                            });
                         }
                     }
                     "pin" => {
                         let next = !ALWAYS_ON_TOP.load(Ordering::Relaxed);
                         ALWAYS_ON_TOP.store(next, Ordering::Relaxed);
                         let _ = pin_clone.set_checked(next);
-                        if let Some(win) = app.get_webview_window("main") {
+                        if let Some(win) = app.get_window("main") {
                             let _ = win.set_always_on_top(next);
                         }
                     }
                     "devtools" => {
-                        if let Some(win) = app.get_webview_window("main") {
+                        if let Some(win) = app.get_window("main") {
                             let _ = win.show();
                             let _ = win.unminimize();
                             let _ = win.set_focus();
-                            win.open_devtools();
+                            with_keep_webview(&win, |wv| {
+                                wv.open_devtools();
+                            });
                         }
                     }
                     "quit" => {
