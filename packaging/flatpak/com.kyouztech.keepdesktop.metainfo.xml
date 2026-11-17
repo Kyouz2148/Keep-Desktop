@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.kyouztech.keepdesktop</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>Google Keep</name>
+  <summary>Aplicativo desktop leve para o Google Keep</summary>
+  <description>
+    <p>
+      Cliente desktop nativo para o Google Keep com suporte a bandeja do sistema (System Tray),
+      atalhos globais, nota rápida, controle de zoom persistente e abertura de links externos
+      no navegador padrão.
+    </p>
+  </description>
+  <launchable type="desktop-id">com.kyouztech.keepdesktop.desktop</launchable>
+  <url type="homepage">https://github.com/Kyouz2148/Keep-Desktop</url>
+  <developer id="com.kyouztech">
+    <name>Kyouz2148</name>
+  </developer>
+  <content_rating type="oars-1.1" />
+  <releases>
+    <release version="0.2.2" date="2026-11-17" />
+  </releases>
+</component>

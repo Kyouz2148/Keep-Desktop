@@ -1,0 +1,40 @@
+id: com.kyouztech.keepdesktop
+runtime: org.gnome.Platform
+runtime-version: '47'
+sdk: org.gnome.Sdk
+command: keep-desktop
+
+finish-args:
+  - --share=ipc
+  - --share=network
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  - --talk-name=org.kde.StatusNotifierWatcher
+  - --talk-name=org.freedesktop.Notifications
+  - --filesystem=xdg-config/autostart:create
+
+modules:
+  - name: keep-desktop
+    buildsystem: simple
+    build-commands:
+      - install -Dm755 keep-desktop /app/bin/keep-desktop
+      - install -Dm644 com.kyouztech.keepdesktop.desktop /app/share/applications/com.kyouztech.keepdesktop.desktop
+      - install -Dm644 com.kyouztech.keepdesktop.metainfo.xml /app/share/metainfo/com.kyouztech.keepdesktop.metainfo.xml
+      - install -Dm644 32x32.png /app/share/icons/hicolor/32x32/apps/com.kyouztech.keepdesktop.png
+      - install -Dm644 128x128.png /app/share/icons/hicolor/128x128/apps/com.kyouztech.keepdesktop.png
+      - install -Dm644 256x256.png /app/share/icons/hicolor/256x256/apps/com.kyouztech.keepdesktop.png
+    sources:
+      - type: file
+        path: ../../src-tauri/target/release/keep-desktop
+      - type: file
+        path: com.kyouztech.keepdesktop.desktop
+      - type: file
+        path: com.kyouztech.keepdesktop.metainfo.xml
+      - type: file
+        path: ../../src-tauri/icons/32x32.png
+      - type: file
+        path: ../../src-tauri/icons/128x128.png
+      - type: file
+        path: ../../src-tauri/icons/128x128@2x.png
+        dest-filename: 256x256.png

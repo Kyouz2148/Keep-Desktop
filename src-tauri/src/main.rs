@@ -5,7 +5,10 @@ use std::{
     cell::RefCell,
     fs,
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Mutex,
+    },
 };
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu},
@@ -21,10 +24,16 @@ const MIN_ZOOM: f64 = 0.25;
 const MAX_ZOOM: f64 = 3.0;
 const ZOOM_STEP: f64 = 0.1;
 
+static TRAY_AVAILABLE: AtomicBool = AtomicBool::new(false);
+
 #[cfg(target_os = "windows")]
 const AUTOSTART_REG_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 #[cfg(target_os = "windows")]
 const AUTOSTART_VALUE_NAME: &str = "GoogleKeepDesktop";
+#[cfg(target_os = "windows")]
+const AUTOSTART_MENU_LABEL: &str = "Iniciar com o Windows";
+#[cfg(not(target_os = "windows"))]
+const AUTOSTART_MENU_LABEL: &str = "Iniciar com o sistema";
 
 const QUICK_NOTE_JS: &str = r#"(function () {
   function isVisible(el) {
@@ -316,7 +325,7 @@ fn open_external_url(url: &str) {
 }
 
 #[cfg(target_os = "windows")]
-fn is_windows_autostart_enabled() -> bool {
+fn is_autostart_enabled() -> bool {
     use winreg::{enums::*, RegKey};
 
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
@@ -326,13 +335,31 @@ fn is_windows_autostart_enabled() -> bool {
     key.get_value::<String, _>(AUTOSTART_VALUE_NAME).is_ok()
 }
 
-#[cfg(not(target_os = "windows"))]
-fn is_windows_autostart_enabled() -> bool {
+#[cfg(target_os = "linux")]
+fn linux_autostart_file() -> Option<PathBuf> {
+    let config_dir = std::env::var_os("XDG_CONFIG_HOME")
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
+    Some(
+        config_dir
+            .join("autostart")
+            .join("com.kyouztech.keepdesktop.desktop"),
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn is_autostart_enabled() -> bool {
+    linux_autostart_file().map(|p| p.exists()).unwrap_or(false)
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
+fn is_autostart_enabled() -> bool {
     false
 }
 
 #[cfg(target_os = "windows")]
-fn set_windows_autostart(enabled: bool) -> Result<(), String> {
+fn set_autostart(enabled: bool) -> Result<(), String> {
     use winreg::{enums::*, RegKey};
 
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
@@ -354,8 +381,40 @@ fn set_windows_autostart(enabled: bool) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(not(target_os = "windows"))]
-fn set_windows_autostart(_enabled: bool) -> Result<(), String> {
+#[cfg(target_os = "linux")]
+fn set_autostart(enabled: bool) -> Result<(), String> {
+    let path = linux_autostart_file()
+        .ok_or_else(|| "Diretório de configuração XDG não encontrado".to_string())?;
+    if enabled {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        let exec_line = if std::env::var_os("FLATPAK_ID").is_some() {
+            "flatpak run com.kyouztech.keepdesktop --minimized".to_string()
+        } else {
+            let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+            format!("\"{}\" --minimized", exe.display())
+        };
+        let entry = format!(
+            "[Desktop Entry]\n\
+             Type=Application\n\
+             Name=Google Keep\n\
+             Comment=Google Keep Desktop\n\
+             Exec={exec_line}\n\
+             Icon=com.kyouztech.keepdesktop\n\
+             Terminal=false\n\
+             Categories=Office;Utility;\n\
+             X-GNOME-Autostart-enabled=true\n"
+        );
+        fs::write(&path, entry).map_err(|e| e.to_string())?;
+    } else if path.exists() {
+        fs::remove_file(&path).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
+fn set_autostart(_enabled: bool) -> Result<(), String> {
     Ok(())
 }
 
@@ -464,7 +523,88 @@ fn register_zoom_listener(
     }
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "linux")]
+fn register_zoom_listener(
+    webview: &wry::WebView,
+    app: &AppHandle,
+    zoom_status_item: MenuItem<tauri::Wry>,
+) {
+    use gtk::prelude::WidgetExt;
+    use wry::WebViewExtUnix;
+
+    let gtk_wv = webview.webview();
+
+    let app_key = app.clone();
+    let zoom_item_key = zoom_status_item.clone();
+    gtk_wv.connect_key_press_event(move |_, event| {
+        if !event.state().contains(gdk::ModifierType::CONTROL_MASK) {
+            return glib::Propagation::Proceed;
+        }
+        let kv = event.keyval();
+        let current = app_key
+            .state::<AppState>()
+            .config
+            .lock()
+            .map(|cfg| cfg.zoom)
+            .unwrap_or(1.0);
+        if kv == gdk::keys::constants::plus
+            || kv == gdk::keys::constants::equal
+            || kv == gdk::keys::constants::KP_Add
+            || kv == gdk::keys::constants::KP_Equal
+        {
+            apply_zoom(&app_key, &zoom_item_key, current + ZOOM_STEP);
+            return glib::Propagation::Stop;
+        }
+        if kv == gdk::keys::constants::minus || kv == gdk::keys::constants::KP_Subtract {
+            apply_zoom(&app_key, &zoom_item_key, current - ZOOM_STEP);
+            return glib::Propagation::Stop;
+        }
+        if kv == gdk::keys::constants::_0 || kv == gdk::keys::constants::KP_0 {
+            apply_zoom(&app_key, &zoom_item_key, 1.0);
+            return glib::Propagation::Stop;
+        }
+        glib::Propagation::Proceed
+    });
+
+    let app_scroll = app.clone();
+    let zoom_item_scroll = zoom_status_item;
+    gtk_wv.connect_scroll_event(move |_, event| {
+        if !event.state().contains(gdk::ModifierType::CONTROL_MASK) {
+            return glib::Propagation::Proceed;
+        }
+        let current = app_scroll
+            .state::<AppState>()
+            .config
+            .lock()
+            .map(|cfg| cfg.zoom)
+            .unwrap_or(1.0);
+        match event.direction() {
+            gdk::ScrollDirection::Up => {
+                apply_zoom(&app_scroll, &zoom_item_scroll, current + ZOOM_STEP);
+                glib::Propagation::Stop
+            }
+            gdk::ScrollDirection::Down => {
+                apply_zoom(&app_scroll, &zoom_item_scroll, current - ZOOM_STEP);
+                glib::Propagation::Stop
+            }
+            gdk::ScrollDirection::Smooth => {
+                let (_, dy) = event.delta();
+                if dy < -0.05 {
+                    apply_zoom(&app_scroll, &zoom_item_scroll, current + ZOOM_STEP);
+                    glib::Propagation::Stop
+                } else if dy > 0.05 {
+                    apply_zoom(&app_scroll, &zoom_item_scroll, current - ZOOM_STEP);
+                    glib::Propagation::Stop
+                } else {
+                    glib::Propagation::Proceed
+                }
+            }
+            _ => glib::Propagation::Proceed,
+        }
+    });
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
 fn register_zoom_listener(
     _webview: &wry::WebView,
     _app: &AppHandle,
@@ -498,13 +638,13 @@ fn main() {
                 .join("desktop-config.json");
 
             let mut initial_cfg = load_config(&config_path);
-            let registry_autostart = is_windows_autostart_enabled();
-            if initial_cfg.autostart != registry_autostart {
-                initial_cfg.autostart = registry_autostart;
+            let system_autostart = is_autostart_enabled();
+            if initial_cfg.autostart != system_autostart {
+                initial_cfg.autostart = system_autostart;
             }
-            // Garante que o caminho no registro reflita a versão atual caso habilitado
+            // Garante que o comando salvo reflita a versão atual caso habilitado
             if initial_cfg.autostart {
-                let _ = set_windows_autostart(true);
+                let _ = set_autostart(true);
             }
 
             let clear_cache_storage = !initial_cfg.sw_migrated_v2;
@@ -634,7 +774,19 @@ fn main() {
                     builder = builder.with_url(KEEP_URL);
                 }
 
-                builder.build(&window)?
+                #[cfg(target_os = "linux")]
+                {
+                    use wry::WebViewBuilderExtUnix;
+                    let vbox = window.default_vbox()?;
+                    let wv = builder.build_gtk(&vbox)?;
+                    let _ = wv.set_visible(true);
+                    wv
+                }
+
+                #[cfg(not(target_os = "linux"))]
+                {
+                    builder.build(&window)?
+                }
             };
 
             let _ = webview.zoom(initial_zoom);
@@ -674,7 +826,7 @@ fn main() {
             let autostart_item = CheckMenuItem::with_id(
                 app,
                 "autostart",
-                "Iniciar com o Windows",
+                AUTOSTART_MENU_LABEL,
                 true,
                 initial_autostart,
                 None::<&str>,
@@ -760,7 +912,7 @@ fn main() {
                             .lock()
                             .map(|cfg| !cfg.autostart)
                             .unwrap_or(false);
-                        match set_windows_autostart(desired) {
+                        match set_autostart(desired) {
                             Ok(()) => {
                                 if let Ok(mut cfg) = state.config.lock() {
                                     cfg.autostart = desired;
@@ -769,8 +921,8 @@ fn main() {
                                 let _ = autostart_clone.set_checked(desired);
                             }
                             Err(err) => {
-                                eprintln!("Erro ao atualizar autostart no Windows: {err}");
-                                let current = is_windows_autostart_enabled();
+                                eprintln!("Erro ao atualizar autostart: {err}");
+                                let current = is_autostart_enabled();
                                 let _ = autostart_clone.set_checked(current);
                             }
                         }
@@ -827,7 +979,13 @@ fn main() {
                 tray_builder = tray_builder.icon(icon.clone());
             }
 
-            tray_builder.build(app)?;
+            match tray_builder.build(app) {
+                Ok(_) => TRAY_AVAILABLE.store(true, Ordering::Relaxed),
+                Err(err) => {
+                    eprintln!("Aviso: bandeja do sistema indisponível: {err}");
+                    let _ = window.show();
+                }
+            }
 
             Ok(())
         })
@@ -861,11 +1019,13 @@ fn main() {
             WindowEvent::Focused(false) => {
                 save_state_config(window.app_handle());
             }
-            // Oculta na bandeja em vez de fechar o app ao clicar no X
+            // Oculta na bandeja quando disponível; caso contrário fecha normalmente
             WindowEvent::CloseRequested { api, .. } => {
                 save_state_config(window.app_handle());
-                let _ = window.hide();
-                api.prevent_close();
+                if TRAY_AVAILABLE.load(Ordering::Relaxed) {
+                    let _ = window.hide();
+                    api.prevent_close();
+                }
             }
             _ => {}
         })

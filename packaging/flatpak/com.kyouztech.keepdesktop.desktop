@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Google Keep
+GenericName=Notas e Lembretes
+Comment=Aplicativo desktop leve para o Google Keep
+Exec=keep-desktop
+Icon=com.kyouztech.keepdesktop
+Terminal=false
+Categories=Office;Utility;
+Keywords=Google Keep;Notes;Notas;Lembretes;
+StartupWMClass=keep-desktop

@@ -1,4 +1,4 @@
-name: Build Windows Executable
+name: Build & Release (Windows + Linux)
 
 on:
   push:
@@ -30,9 +30,9 @@ jobs:
 
       - name: Build Tauri Windows app (NSIS)
         shell: pwsh
-        run: tauri build
+        run: tauri build --bundles nsis
 
-      - name: List generated binaries
+      - name: List generated Windows binaries
         shell: pwsh
         run: |
           Get-ChildItem -Path "src-tauri/target/release/keep-desktop.exe"
@@ -46,13 +46,89 @@ jobs:
             src-tauri/target/release/keep-desktop.exe
             src-tauri/target/release/bundle/nsis/*.exe
 
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Linux & Flatpak build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            flatpak \
+            flatpak-builder
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install Tauri CLI (prebuilt)
+        run: npm install -g @tauri-apps/cli@^2
+
+      - name: Build Tauri Linux app (.deb)
+        run: tauri build --bundles deb
+
+      - name: Check dynamically linked libraries
+        run: ldd src-tauri/target/release/keep-desktop
+
+      - name: Build Flatpak bundle (.flatpak)
+        run: |
+          VERSION=$(jq -r '.version' src-tauri/tauri.conf.json)
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y flathub org.gnome.Platform//47 org.gnome.Sdk//47
+          flatpak-builder --user --force-clean --disable-rofiles-fuse --repo=flatpak-repo build-flatpak packaging/flatpak/com.kyouztech.keepdesktop.yml
+          flatpak build-bundle flatpak-repo "Google.Keep_${VERSION}_x86_64.flatpak" com.kyouztech.keepdesktop
+
+      - name: List generated Linux packages
+        run: |
+          ls -lh src-tauri/target/release/bundle/deb/*.deb
+          ls -lh Google.Keep_*_x86_64.flatpak
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: keep-desktop-linux
+          path: |
+            src-tauri/target/release/bundle/deb/*.deb
+            Google.Keep_*_x86_64.flatpak
+
+  release:
+    needs: [build-windows, build-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: List release assets
+        run: ls -lh release-assets
+
       - name: Read app version
         id: version
-        shell: pwsh
         run: |
-          $conf = Get-Content "src-tauri/tauri.conf.json" | ConvertFrom-Json
-          echo "tag=v$($conf.version)" >> $env:GITHUB_OUTPUT
-          echo "version=$($conf.version)" >> $env:GITHUB_OUTPUT
+          VERSION=$(jq -r '.version' src-tauri/tauri.conf.json)
+          echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Create/Update GitHub Release
         uses: softprops/action-gh-release@v2
@@ -60,6 +136,4 @@ jobs:
           tag_name: ${{ steps.version.outputs.tag }}
           name: "Google Keep Desktop ${{ steps.version.outputs.tag }}"
           generate_release_notes: true
-          files: |
-            src-tauri/target/release/keep-desktop.exe
-            src-tauri/target/release/bundle/nsis/*.exe
+          files: release-assets/*

@@ -4,10 +4,11 @@
 
 # Google Keep Desktop
 
-**Aplicativo desktop leve e nativo para o Google Keep no Windows, construído com Rust, Tauri v2 e WebView2.**
+**Aplicativo desktop leve e nativo para o Google Keep (Windows & Linux), construído com Rust, Tauri v2, WebView2 e WebKitGTK.**
 
 [![Release](https://img.shields.io/github/v/release/Kyouz2148/Keep-Desktop?color=fbbc04&label=Release&style=for-the-badge)](https://github.com/Kyouz2148/Keep-Desktop/releases)
-![Platform](https://img.shields.io/badge/Windows-10%20%2F%2011-0078D6?style=for-the-badge&logo=windows)
+![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011-0078D6?style=for-the-badge&logo=windows)
+![Linux](https://img.shields.io/badge/Linux-.deb%20%7C%20Flatpak-FCC624?style=for-the-badge&logo=linux&logoColor=black)
 ![Built with Tauri](https://img.shields.io/badge/Tauri-v2-FFC131?style=for-the-badge&logo=tauri&logoColor=black)
 
 <br />
@@ -91,43 +92,60 @@ Ao tentar carregar o Google Keep dentro de uma `WebviewWindow` padrão do Tauri,
 
 ```text
 ├── .github/workflows/
-│   └── build-windows.yml   # CI/CD no GitHub Actions (compila no Windows e publica Release)
+│   └── build-windows.yml   # CI/CD no GitHub Actions (compila Windows + Linux .deb/.flatpak)
 ├── docs/
-│   ├── preview.jpg         # Captura ilustrativa da janela principal no Windows 11
+│   ├── preview.jpg         # Captura ilustrativa da janela principal
 │   └── tray-menu.jpg       # Captura ilustrativa do menu na bandeja do sistema
+├── packaging/flatpak/
+│   ├── com.kyouztech.keepdesktop.yml          # Manifesto Flatpak (GNOME Platform 47)
+│   ├── com.kyouztech.keepdesktop.desktop      # Atalho Desktop XDG
+│   └── com.kyouztech.keepdesktop.metainfo.xml # Metadados AppStream
 ├── src/
 │   └── index.html          # Fallback estático mínimo exigido pelo frontendDist do Tauri
 ├── src-tauri/
-│   ├── Cargo.toml          # Dependências Rust (tauri v2, wry, webview2-com, winreg, windows)
-│   ├── tauri.conf.json     # Metadados do app, ícone e configuração do instalador NSIS
+│   ├── Cargo.toml          # Dependências Rust (tauri v2, wry, gtk/webkit2gtk, webview2-com)
+│   ├── tauri.conf.json     # Metadados do app, ícone e configuração dos instaladores
 │   ├── capabilities/       # Permissões padrão do Tauri
-│   └── src/main.rs         # Código principal: janela, WebView2, tray, atalhos, config e links
+│   └── src/main.rs         # Código principal: janela, WebView, tray, atalhos, config e links
 └── README.md
 ```
 
 ---
 
-## Instalação (Windows)
+## Instalação
 
-Baixe a versão mais recente na página de **[Releases](https://github.com/Kyouz2148/Keep-Desktop/releases)**:
+Baixe os pacotes da versão mais recente na página de **[Releases](https://github.com/Kyouz2148/Keep-Desktop/releases)**:
 
+### Windows
 - **Instalador completo**: `Google.Keep_<versao>_x64-setup.exe`
 - **Executável avulso**: `keep-desktop.exe`
 
 *(Requer o Microsoft Edge WebView2 Runtime, já pré-instalado no Windows 10/11.)*
 
+### Linux (`.deb` — Debian / Ubuntu / Mint / Pop!\_OS)
+```bash
+sudo apt install ./Google.Keep_<versao>_amd64.deb
+```
+
+### Linux (`Flatpak` — qualquer distro)
+```bash
+flatpak install --user ./Google.Keep_<versao>_x86_64.flatpak
+flatpak run com.kyouztech.keepdesktop
+```
+*(Caso ainda não tenha o runtime GNOME 47 configurado no Flathub: `flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo`.)*
+
 ---
 
 ## Compilação local e CI/CD
 
-### Localmente no Windows
+### Localmente
 
-```powershell
+```bash
 npm install -g @tauri-apps/cli@^2
 cargo tauri dev    # Executar em modo desenvolvimento
-cargo tauri build  # Gerar binário release e instalador NSIS
+cargo tauri build  # Gerar binário e pacote nativo (NSIS no Windows / .deb no Linux)
 ```
 
 ### Automação via GitHub Actions
 
-Todo `push` na branch `main` (ou tag `v*`) executa o workflow [`.github/workflows/build-windows.yml`](.github/workflows/build-windows.yml) em `windows-latest`, compila o `keep-desktop.exe` e o instalador NSIS e cria/atualiza automaticamente a Release correspondente à versão definida em [`src-tauri/tauri.conf.json`](src-tauri/tauri.conf.json).
+Todo `push` na branch `main` (ou tag `v*`) executa o workflow [`.github/workflows/build-windows.yml`](.github/workflows/build-windows.yml) em `windows-latest` e `ubuntu-latest`, gerando simultaneamente o instalador Windows (NSIS + `.exe`), o pacote `.deb` e o bundle `.flatpak` na Release correspondente à versão definida em [`src-tauri/tauri.conf.json`](src-tauri/tauri.conf.json).
