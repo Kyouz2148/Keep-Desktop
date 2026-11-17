@@ -169,7 +169,7 @@ fn save_state_config(app: &AppHandle) {
     let state = app.state::<AppState>();
     if let Ok(cfg) = state.config.lock() {
         save_config(&state.config_path, &cfg);
-    }
+    };
 }
 
 fn with_keep_webview<F>(window: &Window, f: F)
@@ -788,7 +788,7 @@ fn main() {
                     if let Ok(mut cfg) = state.config.lock() {
                         cfg.width = Some(size.width);
                         cfg.height = Some(size.height);
-                    }
+                    };
                 }
             }
             WindowEvent::Moved(pos) => {
@@ -801,7 +801,7 @@ fn main() {
                     if let Ok(mut cfg) = state.config.lock() {
                         cfg.x = Some(pos.x);
                         cfg.y = Some(pos.y);
-                    }
+                    };
                 }
             }
             WindowEvent::Focused(false) => {
