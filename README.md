@@ -16,7 +16,7 @@ O objetivo do **Google Keep Desktop** é oferecer uma janela dedicada, discreta,
 
 ---
 
-## Recursos atuais (`v0.2.0`)
+## Recursos atuais (`v0.2.1`)
 
 - **Bandeja do sistema (System Tray)**:
   - Clique esquerdo no ícone alterna entre mostrar e ocultar a janela.
@@ -31,7 +31,7 @@ O objetivo do **Google Keep Desktop** é oferecer uma janela dedicada, discreta,
 - **Persistência automática (`desktop-config.json`)**:
   - Lembra tamanho, posição (validada nos monitores conectados), estado de *Sempre no topo*, autostart e nível de zoom.
 - **Controle de zoom persistente**:
-  - Submenu **Zoom** na bandeja (`+10%`, `-10%`, `Restaurar 100%`), reaplicado automaticamente ao carregar.
+  - Ajuste direto com `Ctrl + +`, `Ctrl + -`, `Ctrl + 0`, `Ctrl + Scroll do mouse` ou pelo submenu **Zoom** na bandeja (`+10%`, `-10%`, `Restaurar 100%`), salvo e reaplicado automaticamente.
 - **Links externos no navegador padrão**:
   - Links clicados dentro das notas (inclusive redirecionamentos `google.com/url?q=...`) abrem no seu navegador padrão do Windows via `ShellExecuteW`, mantendo dentro do app apenas o Google Keep e telas de autenticação Google.
 - **Barra de título escura nativa**:

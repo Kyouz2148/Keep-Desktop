@@ -17,8 +17,8 @@ use url::Url;
 use wry::PageLoadEvent;
 
 const KEEP_URL: &str = "https://keep.google.com";
-const MIN_ZOOM: f64 = 0.5;
-const MAX_ZOOM: f64 = 2.0;
+const MIN_ZOOM: f64 = 0.25;
+const MAX_ZOOM: f64 = 3.0;
 const ZOOM_STEP: f64 = 0.1;
 
 #[cfg(target_os = "windows")]
@@ -140,7 +140,7 @@ fn clamp_zoom(zoom: f64) -> f64 {
     if !zoom.is_finite() {
         return 1.0;
     }
-    (zoom.clamp(MIN_ZOOM, MAX_ZOOM) * 10.0).round() / 10.0
+    (zoom.clamp(MIN_ZOOM, MAX_ZOOM) * 100.0).round() / 100.0
 }
 
 fn format_zoom_label(zoom: f64) -> String {
@@ -421,6 +421,57 @@ fn configure_windows_profile_and_navigate(
     let _ = webview.load_url(KEEP_URL);
 }
 
+#[cfg(target_os = "windows")]
+fn register_zoom_listener(
+    webview: &wry::WebView,
+    app: &AppHandle,
+    zoom_status_item: MenuItem<tauri::Wry>,
+) {
+    use webview2_com::ZoomFactorChangedEventHandler;
+    use wry::WebViewExtWindows;
+
+    let app_handle = app.clone();
+    let handler = ZoomFactorChangedEventHandler::create(Box::new(move |controller, _| {
+        if let Some(ctrl) = controller {
+            let mut factor = 1.0_f64;
+            if unsafe { ctrl.ZoomFactor(&mut factor) }.is_ok() {
+                let rounded = clamp_zoom(factor);
+                let state = app_handle.state::<AppState>();
+                let changed = if let Ok(mut cfg) = state.config.lock() {
+                    if (cfg.zoom - rounded).abs() >= 0.005 {
+                        cfg.zoom = rounded;
+                        save_config(&state.config_path, &cfg);
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+                if changed {
+                    let _ = zoom_status_item.set_text(format_zoom_label(rounded));
+                }
+            }
+        }
+        Ok(())
+    }));
+
+    let mut token: i64 = 0;
+    unsafe {
+        let _ = webview
+            .controller()
+            .add_ZoomFactorChanged(&handler, &mut token);
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn register_zoom_listener(
+    _webview: &wry::WebView,
+    _app: &AppHandle,
+    _zoom_status_item: MenuItem<tauri::Wry>,
+) {
+}
+
 fn main() {
     let start_minimized = std::env::args().any(|arg| arg == "--minimized");
 
@@ -525,6 +576,14 @@ fn main() {
                 let _ = window.set_focus();
             }
 
+            let zoom_status_item = MenuItem::with_id(
+                app,
+                "zoom_status",
+                format_zoom_label(initial_zoom),
+                false,
+                None::<&str>,
+            )?;
+
             let mut web_context = wry::WebContext::new(data_dir);
             let page_load_app = app.handle().clone();
 
@@ -533,6 +592,7 @@ fn main() {
                     .with_background_color((0x20, 0x21, 0x24, 0xff))
                     .with_devtools(true)
                     .with_clipboard(true)
+                    .with_hotkeys_zoom(true)
                     .with_new_window_req_handler(|url, _| {
                         let resolved = resolve_target_url(&url);
                         if should_open_in_app(&resolved) {
@@ -578,6 +638,7 @@ fn main() {
             };
 
             let _ = webview.zoom(initial_zoom);
+            register_zoom_listener(&webview, app.handle(), zoom_status_item.clone());
 
             KEEP_CONTEXT.with(|cell| {
                 *cell.borrow_mut() = Some(web_context);
@@ -619,13 +680,6 @@ fn main() {
                 None::<&str>,
             )?;
 
-            let zoom_status_item = MenuItem::with_id(
-                app,
-                "zoom_status",
-                format_zoom_label(initial_zoom),
-                false,
-                None::<&str>,
-            )?;
             let zoom_in_item =
                 MenuItem::with_id(app, "zoom_in", "Aumentar (+10%)", true, None::<&str>)?;
             let zoom_out_item =
