@@ -1,6 +1,20 @@
+<div align="center">
+
+<img src="src-tauri/icons/128x128.png" alt="Google Keep Desktop Icon" width="84" />
+
 # Google Keep Desktop
 
-Aplicativo desktop leve e nativo para o **Google Keep** no Windows, construído com **Rust**, **Tauri v2** e **WebView2** (`wry`).
+**Aplicativo desktop leve e nativo para o Google Keep no Windows, construído com Rust, Tauri v2 e WebView2.**
+
+[![Release](https://img.shields.io/github/v/release/Kyouz2148/Keep-Desktop?color=fbbc04&label=Release&style=for-the-badge)](https://github.com/Kyouz2148/Keep-Desktop/releases)
+![Platform](https://img.shields.io/badge/Windows-10%20%2F%2011-0078D6?style=for-the-badge&logo=windows)
+![Built with Tauri](https://img.shields.io/badge/Tauri-v2-FFC131?style=for-the-badge&logo=tauri&logoColor=black)
+
+<br />
+
+<img src="docs/preview.jpg" alt="Google Keep Desktop — Janela principal em modo escuro no Windows 11" width="90%" />
+
+</div>
 
 ---
 
@@ -17,6 +31,12 @@ O objetivo do **Google Keep Desktop** é oferecer uma janela dedicada, discreta,
 ---
 
 ## Recursos atuais (`v0.2.1`)
+
+<div align="center">
+  <img src="docs/tray-menu.jpg" alt="Menu da bandeja do sistema (System Tray) do Google Keep Desktop" width="460" />
+</div>
+
+<br />
 
 - **Bandeja do sistema (System Tray)**:
   - Clique esquerdo no ícone alterna entre mostrar e ocultar a janela.
@@ -47,7 +67,7 @@ O objetivo do **Google Keep Desktop** é oferecer uma janela dedicada, discreta,
 
 - **Rust + Tauri v2 (`tauri`)**: gerencia ciclo de vida da aplicação, janela nativa, bandeja do sistema (*System Tray*), atalhos globais (`tauri-plugin-global-shortcut`) e geração do instalador NSIS para Windows.
 - **WebView pura com `wry` (`WebView2`)**: renderiza diretamente `https://keep.google.com` usando o Edge WebView2 nativo do Windows.
-- **APIs Win32 (`windows`, `webview2-com`, `winreg`)**: controle fino de perfil/privacidade do WebView2, abertura de URLs externas com `ShellExecuteW` e gerenciamento do registro de inicialização automática no Windows.
+- **APIs Win32 (`windows`, `webview2-com`, `winreg`)**: controle fino de perfil/privacidade e zoom do WebView2, abertura de URLs externas com `ShellExecuteW` e gerenciamento do registro de inicialização automática no Windows.
 
 ### O principal desafio técnico (e por que a arquitetura é assim)
 
@@ -72,6 +92,9 @@ Ao tentar carregar o Google Keep dentro de uma `WebviewWindow` padrão do Tauri,
 ```text
 ├── .github/workflows/
 │   └── build-windows.yml   # CI/CD no GitHub Actions (compila no Windows e publica Release)
+├── docs/
+│   ├── preview.jpg         # Captura ilustrativa da janela principal no Windows 11
+│   └── tray-menu.jpg       # Captura ilustrativa do menu na bandeja do sistema
 ├── src/
 │   └── index.html          # Fallback estático mínimo exigido pelo frontendDist do Tauri
 ├── src-tauri/
