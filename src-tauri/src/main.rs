@@ -3875,6 +3875,54 @@ fn layout_main_webviews_on_thread(window: &Window) {
     }
 }
 
+fn configure_gemini_builder<'a>(
+    app: &AppHandle,
+    builder: wry::WebViewBuilder<'a>,
+) -> wry::WebViewBuilder<'a> {
+    let page_load_app = app.clone();
+    builder
+        .with_background_color((0x13, 0x13, 0x14, 0xff))
+        .with_devtools(true)
+        .with_clipboard(true)
+        .with_hotkeys_zoom(true)
+        .with_visible(false)
+        .with_permission_handler(|kind| match kind {
+            wry::PermissionKind::Microphone
+            | wry::PermissionKind::ClipboardRead
+            | wry::PermissionKind::Autoplay => wry::PermissionResponse::Allow,
+            _ => wry::PermissionResponse::Default,
+        })
+        .with_new_window_req_handler(|url, _| {
+            let resolved = resolve_target_url(&url);
+            if should_open_gemini_in_app(&resolved) {
+                wry::NewWindowResponse::Allow
+            } else {
+                open_external_url(&resolved);
+                wry::NewWindowResponse::Deny
+            }
+        })
+        .with_on_page_load_handler(move |event, _| {
+            if matches!(event, PageLoadEvent::Finished) {
+                let voice_active = page_load_app
+                    .state::<AppState>()
+                    .gemini_voice_active
+                    .lock()
+                    .map(|v| *v)
+                    .unwrap_or(false);
+                if let Some(win) = page_load_app.get_window("main") {
+                    with_gemini_webview(&win, move |wv| {
+                        let _ = wv.evaluate_script(GEMINI_STYLE_JS);
+                        if voice_active {
+                            let voice_js = build_gemini_voice_js(true);
+                            let _ = wv.evaluate_script(&voice_js);
+                        }
+                    });
+                }
+            }
+        })
+        .with_url(GEMINI_URL)
+}
+
 fn ensure_gemini_webview(app: &AppHandle) {
     let already_exists = GEMINI_WEBVIEW.with(|cell| cell.borrow().is_some());
     if already_exists {
@@ -3882,51 +3930,6 @@ fn ensure_gemini_webview(app: &AppHandle) {
     }
     let Some(main_win) = app.get_window("main") else {
         return;
-    };
-
-    let page_load_app = app.clone();
-    let apply_common_builder = |builder: wry::WebViewBuilder<'_>| {
-        builder
-            .with_background_color((0x13, 0x13, 0x14, 0xff))
-            .with_devtools(true)
-            .with_clipboard(true)
-            .with_hotkeys_zoom(true)
-            .with_visible(false)
-            .with_permission_handler(|kind| match kind {
-                wry::PermissionKind::Microphone
-                | wry::PermissionKind::ClipboardRead
-                | wry::PermissionKind::Autoplay => wry::PermissionResponse::Allow,
-                _ => wry::PermissionResponse::Default,
-            })
-            .with_new_window_req_handler(|url, _| {
-                let resolved = resolve_target_url(&url);
-                if should_open_gemini_in_app(&resolved) {
-                    wry::NewWindowResponse::Allow
-                } else {
-                    open_external_url(&resolved);
-                    wry::NewWindowResponse::Deny
-                }
-            })
-            .with_on_page_load_handler(move |event, _| {
-                if matches!(event, PageLoadEvent::Finished) {
-                    let voice_active = page_load_app
-                        .state::<AppState>()
-                        .gemini_voice_active
-                        .lock()
-                        .map(|v| *v)
-                        .unwrap_or(false);
-                    if let Some(win) = page_load_app.get_window("main") {
-                        with_gemini_webview(&win, move |wv| {
-                            let _ = wv.evaluate_script(GEMINI_STYLE_JS);
-                            if voice_active {
-                                let voice_js = build_gemini_voice_js(true);
-                                let _ = wv.evaluate_script(&voice_js);
-                            }
-                        });
-                    }
-                }
-            })
-            .with_url(GEMINI_URL)
     };
 
     #[cfg(target_os = "windows")]
@@ -3942,7 +3945,7 @@ fn ensure_gemini_webview(app: &AppHandle) {
             .unwrap_or_else(|_| PhysicalSize::new(1100, 760));
         let scale = main_win.scale_factor().unwrap_or(1.0);
         let bar_h_phys = ((TOP_BAR_HEIGHT as f64) * scale).round().max(30.0) as u32;
-        let builder = apply_common_builder(wry::WebViewBuilder::new())
+        let builder = configure_gemini_builder(app, wry::WebViewBuilder::new())
             .with_environment(env)
             .with_theme(wry::Theme::Dark)
             .with_bounds(wry::Rect {
@@ -3968,7 +3971,8 @@ fn ensure_gemini_webview(app: &AppHandle) {
         let built = KEEP_CONTEXT.with(|ctx_cell| {
             let mut borrow = ctx_cell.borrow_mut();
             let ctx = borrow.as_mut()?;
-            let builder = apply_common_builder(wry::WebViewBuilder::new_with_web_context(ctx));
+            let builder =
+                configure_gemini_builder(app, wry::WebViewBuilder::new_with_web_context(ctx));
             builder.build_gtk(&vbox).ok()
         });
         if let Some(wv) = built {
@@ -4959,6 +4963,7 @@ fn main() {
             let top_bar_ipc_app = app.handle().clone();
             let top_bar_load_app = app.handle().clone();
             let top_bar_webview = {
+                #[cfg_attr(not(target_os = "windows"), allow(unused_mut))]
                 let mut bar_builder = wry::WebViewBuilder::new_with_web_context(&mut top_bar_context)
                     .with_background_color((0x20, 0x21, 0x24, 0xff))
                     .with_html(TOP_BAR_HTML)
@@ -5173,6 +5178,7 @@ fn main() {
             let mut qn_web_context = wry::WebContext::new(qn_data_dir);
             let ipc_app = app.handle().clone();
             let qn_webview = {
+                #[cfg_attr(not(target_os = "windows"), allow(unused_mut))]
                 let mut builder = wry::WebViewBuilder::new_with_web_context(&mut qn_web_context)
                     .with_background_color((0x20, 0x21, 0x24, 0xff))
                     .with_clipboard(true)
