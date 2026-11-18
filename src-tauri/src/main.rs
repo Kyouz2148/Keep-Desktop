@@ -466,6 +466,23 @@ const QUICK_NOTE_HTML: &str = r#"<!DOCTYPE html>
     gap: 6px;
     flex-shrink: 0;
   }
+  .error-banner {
+    display: none;
+    padding: 6px 12px;
+    border-top: 1px solid rgba(251, 188, 4, 0.35);
+    background: rgba(251, 188, 4, 0.12);
+    color: #fdd663;
+    font-size: 11px;
+    line-height: 1.35;
+    white-space: normal;
+    word-break: break-word;
+    user-select: text;
+    max-height: 84px;
+    overflow-y: auto;
+  }
+  .error-banner.visible {
+    display: block;
+  }
   .btn-ghost {
     border: 1px solid rgba(255, 255, 255, 0.16);
     background: transparent;
@@ -529,6 +546,8 @@ const QUICK_NOTE_HTML: &str = r#"<!DOCTYPE html>
 
     <div id="palette-bar" class="palette-bar"></div>
 
+    <div id="error-banner" class="error-banner"></div>
+
     <div class="footer">
       <div class="tools">
         <button id="btn-checklist" class="icon-btn" type="button" title="Alternar modo checklist">
@@ -587,6 +606,7 @@ const QUICK_NOTE_HTML: &str = r#"<!DOCTYPE html>
       var tagsChips = document.getElementById('tags-chips');
       var tagInput = document.getElementById('tag-input');
       var labelsList = document.getElementById('labels-list');
+      var errorBanner = document.getElementById('error-banner');
       var hintEl = document.getElementById('hint-text');
       var btnPin = document.getElementById('btn-pin');
       var btnChecklist = document.getElementById('btn-checklist');
@@ -604,7 +624,8 @@ const QUICK_NOTE_HTML: &str = r#"<!DOCTYPE html>
         availableLabels: [],
         paletteOpen: false,
         tagsOpen: false,
-        saving: false
+        saving: false,
+        errorVisible: false
       };
 
       function clearChildren(el) {
@@ -646,13 +667,14 @@ const QUICK_NOTE_HTML: &str = r#"<!DOCTYPE html>
         var extra = 0;
         if (state.paletteOpen) extra += 34;
         if (state.tagsOpen) extra += 136;
+        if (state.errorVisible) extra += 48;
         if (state.isChecklist) {
           extra += Math.min(Math.max(0, state.items.length - 3) * 28, 120);
         } else {
           var lines = (bodyEl.value.match(/\n/g) || []).length;
           extra += Math.min(Math.max(0, lines - 3) * 20, 110);
         }
-        var targetH = Math.min(540, Math.max(330, 330 + extra));
+        var targetH = Math.min(590, Math.max(330, 330 + extra));
         send({ action: 'resize', height: targetH });
       }
 
@@ -945,9 +967,27 @@ const QUICK_NOTE_HTML: &str = r#"<!DOCTYPE html>
         }
       }
 
+      function clearError() {
+        state.errorVisible = false;
+        errorBanner.textContent = '';
+        errorBanner.classList.remove('visible');
+      }
+
+      function showError(msg) {
+        var text = msg || 'Não foi possível salvar no Keep';
+        state.errorVisible = true;
+        errorBanner.textContent = text;
+        errorBanner.classList.add('visible');
+        hintEl.textContent = 'Falha ao salvar';
+        hintEl.title = text;
+        hintEl.className = 'hint warn';
+      }
+
       window.focusQuickNote = function () {
         state.saving = false;
+        clearError();
         hintEl.textContent = DEFAULT_HINT;
+        hintEl.title = '';
         hintEl.className = 'hint';
         refreshDraftBadge();
         renderTags();
@@ -964,8 +1004,7 @@ const QUICK_NOTE_HTML: &str = r#"<!DOCTYPE html>
 
       window.onQuickNoteSaveError = function (msg) {
         state.saving = false;
-        hintEl.textContent = msg || 'Não foi possível salvar no Keep';
-        hintEl.className = 'hint warn';
+        showError(msg);
         requestResize();
         setTimeout(function () {
           if (state.isChecklist) {
@@ -979,6 +1018,7 @@ const QUICK_NOTE_HTML: &str = r#"<!DOCTYPE html>
 
       window.resetQuickNote = function () {
         state.saving = false;
+        clearError();
         titleEl.value = '';
         bodyEl.value = '';
         tagInput.value = '';
@@ -996,6 +1036,7 @@ const QUICK_NOTE_HTML: &str = r#"<!DOCTYPE html>
         applyColor('default');
         setChecklistMode(false, true);
         hintEl.textContent = DEFAULT_HINT;
+        hintEl.title = '';
         hintEl.className = 'hint';
         refreshDraftBadge();
       };
@@ -1050,6 +1091,7 @@ const QUICK_NOTE_HTML: &str = r#"<!DOCTYPE html>
           return;
         }
         state.saving = true;
+        clearError();
         hintEl.textContent = 'Salvando no Keep...';
         hintEl.className = 'hint ok';
         try { localStorage.removeItem(DRAFT_KEY); } catch (_) {}
@@ -1556,9 +1598,34 @@ fn build_submit_note_js(
     return null;
   }}
 
+  function queryAllDeep(root, selector) {{
+    var out = [];
+    if (!root) return out;
+    var visited = [];
+    function walk(scope) {{
+      if (!scope || visited.indexOf(scope) !== -1) return;
+      visited.push(scope);
+      try {{
+        var direct = scope.querySelectorAll(selector);
+        for (var i = 0; i < direct.length; i++) {{
+          if (out.indexOf(direct[i]) === -1) out.push(direct[i]);
+        }}
+      }} catch (_) {{}}
+      try {{
+        var all = scope.querySelectorAll('*');
+        for (var j = 0; j < all.length; j++) {{
+          if (all[j].shadowRoot) walk(all[j].shadowRoot);
+        }}
+      }} catch (_) {{}}
+    }}
+    walk(root);
+    return out;
+  }}
+
   function collectEditableBoxes(root) {{
     if (!root) return [];
-    var candidates = root.querySelectorAll(
+    var candidates = queryAllDeep(
+      root,
       '[contenteditable="true"], [contenteditable=""], [contenteditable="plaintext-only"], textarea'
     );
     var out = [];
@@ -1566,7 +1633,7 @@ fn build_submit_note_js(
       var cand = candidates[i];
       if (!cand || cand.nodeType !== 1) continue;
       if (cand.getAttribute('role') === 'button') continue;
-      if (cand.closest('[role="dialog"]') && root === document) continue;
+      if (cand.closest && cand.closest('[role="dialog"]') && root === document) continue;
       if (cand.tagName !== 'TEXTAREA' && cand.isContentEditable !== true) continue;
       if (!isFieldDisplayed(cand)) continue;
       var nested = false;
@@ -1657,18 +1724,24 @@ fn build_submit_note_js(
       '.h1U9Be-YPqjbf',
       '[aria-label*="Criar uma nota" i]',
       '[aria-label*="Take a note" i]',
+      '[aria-label*="Adicionar uma nota" i]',
+      '[data-placeholder*="Criar uma nota" i]',
+      '[data-placeholder*="Take a note" i]',
+      '.IZ65Hb-YPqjbf',
       '[role="textbox"]:not([role="button"])',
+      '[aria-multiline="true"]',
+      '[contenteditable]:not([contenteditable="false"])',
       'textarea'
     ];
     var bestEditable = null;
     var bestAny = null;
     for (var s = 0; s < selectors.length; s++) {{
-      var nodes = root.querySelectorAll(selectors[s]);
+      var nodes = queryAllDeep(root, selectors[s]);
       for (var i = 0; i < nodes.length; i++) {{
         var n = nodes[i];
         if (!n || n === titleBox) continue;
         if (titleBox && (n.contains(titleBox) || titleBox.contains(n))) continue;
-        if (n.getAttribute('role') === 'button') continue;
+        if (n.getAttribute && n.getAttribute('role') === 'button') continue;
         if (looksLikeTitleBox(n)) continue;
         if (!isFieldDisplayed(n)) continue;
         var innerEd = n.querySelector && n.querySelector('[contenteditable="true"], [contenteditable=""], textarea');
@@ -1681,21 +1754,55 @@ fn build_submit_note_js(
       }}
       if (bestEditable) return bestEditable;
     }}
+
+    var active = document.activeElement;
+    if (
+      active &&
+      active !== document.body &&
+      active !== titleBox &&
+      (!titleBox || (!active.contains(titleBox) && !titleBox.contains(active))) &&
+      root.contains(active) &&
+      !looksLikeTitleBox(active) &&
+      (active.tagName === 'TEXTAREA' || active.isContentEditable === true)
+    ) {{
+      return active;
+    }}
+
+    if (!bestAny) {{
+      var textEls = root.querySelectorAll('div, span, p');
+      for (var k = 0; k < textEls.length; k++) {{
+        var el = textEls[k];
+        if (el.children.length > 0) continue;
+        var txt = (el.textContent || '').replace(/\u2026/g, '...').replace(/\s+/g, ' ').trim().toLowerCase();
+        if (txt === 'criar uma nota...' || txt === 'criar uma nota' || txt === 'take a note...' || txt === 'take a note') {{
+          var host = el.closest('[role="textbox"], [contenteditable], .IZ65Hb-YPqjbf') || el.parentElement;
+          if (host && host !== titleBox && (!titleBox || (!host.contains(titleBox) && !titleBox.contains(host)))) {{
+            bestAny = host;
+            break;
+          }}
+        }}
+      }}
+    }}
     return bestAny;
   }}
 
   function describeComposerDebug(root) {{
     try {{
-      if (!root) return 'sem root';
-      var all = root.querySelectorAll('[contenteditable], [role="textbox"], textarea, .h1U9Be-YPqjbf, .r4nke-YPqjbf');
+      var scope = (root && root.closest && root.closest('.IZ65Hb-n0tgWb, .IZ65Hb-TBnied')) || root;
+      if (!scope) return 'sem root';
+      var all = queryAllDeep(
+        scope,
+        '[contenteditable], [role="textbox"], [aria-multiline], textarea, .IZ65Hb-YPqjbf, .h1U9Be-YPqjbf, .r4nke-YPqjbf'
+      );
       var parts = [];
       for (var i = 0; i < all.length && parts.length < 6; i++) {{
         var el = all[i];
         var cls = (typeof el.className === 'string' ? el.className : '').split(/\s+/).slice(0, 2).join('.');
-        var ce = el.getAttribute('contenteditable');
-        var aria = el.getAttribute('aria-label') || '';
-        var ah = el.getAttribute('aria-hidden') || '';
-        parts.push(el.tagName + '(' + cls + ',ce=' + ce + ',ed=' + !!el.isContentEditable + ',ah=' + ah + ',al=' + aria + ')');
+        var ce = el.getAttribute && el.getAttribute('contenteditable');
+        var aria = (el.getAttribute && el.getAttribute('aria-label')) || '';
+        var ah = (el.getAttribute && el.getAttribute('aria-hidden')) || '';
+        var disp = window.getComputedStyle(el).display;
+        parts.push(el.tagName + '(' + cls + ',ce=' + ce + ',ed=' + !!el.isContentEditable + ',ah=' + ah + ',d=' + disp + ',al=' + aria + ')');
       }}
       return 'n=' + all.length + ' ' + parts.join('; ');
     }} catch (_) {{
@@ -1705,6 +1812,7 @@ fn build_submit_note_js(
 
   function findExpandedComposer() {{
     var closeNodes = document.querySelectorAll('[role="button"], button');
+    var fallbackPartial = null;
     for (var c = 0; c < closeNodes.length; c++) {{
       var btn = closeNodes[c];
       if (btn.closest('[role="dialog"]')) continue;
@@ -1726,7 +1834,7 @@ fn build_submit_note_js(
             for (var extra = 0; extra < 4 && probeParent && probeParent !== document.body; extra++) {{
               if (countCloseButtons(probeParent) > 1) break;
               var parentBoxes = collectEditableBoxes(probeParent);
-              if (parentBoxes.length >= 2 && parentBoxes.length <= 4) {{
+              if (parentBoxes.length >= 2 && parentBoxes.length <= 12) {{
                 chosenRoot = probeParent;
                 chosenBoxes = parentBoxes;
                 break;
@@ -1766,18 +1874,31 @@ fn build_submit_note_js(
           }}
           if (!bodyBox) {{
             var searchRoot = chosenRoot;
-            var cardRoot = chosenRoot.closest && chosenRoot.closest('.IZ65Hb-TBnied, .IZ65Hb-n0tgWb');
-            if (cardRoot && countCloseButtons(cardRoot) <= 1) {{
-              searchRoot = cardRoot;
+            var outerCard = chosenRoot.closest && chosenRoot.closest('.IZ65Hb-n0tgWb');
+            var innerCard = chosenRoot.closest && chosenRoot.closest('.IZ65Hb-TBnied');
+            if (outerCard && countCloseButtons(outerCard) <= 1) {{
+              searchRoot = outerCard;
+            }} else if (innerCard && countCloseButtons(innerCard) <= 1) {{
+              searchRoot = innerCard;
             }}
             bodyBox = findBodyFallback(searchRoot, titleBox);
+            if (!bodyBox && outerCard && searchRoot !== outerCard) {{
+              bodyBox = findBodyFallback(outerCard, titleBox);
+            }}
           }}
-          return {{ root: chosenRoot, titleBox: titleBox, bodyBox: bodyBox, closeBtn: btn }};
+          var compObj = {{ root: chosenRoot, titleBox: titleBox, bodyBox: bodyBox, closeBtn: btn }};
+          if (titleBox && bodyBox && titleBox !== bodyBox) {{
+            return compObj;
+          }}
+          if (!fallbackPartial) {{
+            fallbackPartial = compObj;
+          }}
+          break;
         }}
         cur = cur.parentElement;
       }}
     }}
-    return null;
+    return fallbackPartial;
   }}
 
   function containsExpectedText(el, expected) {{
@@ -2221,18 +2342,31 @@ fn build_submit_note_js(
         comp.bodyBox.isContentEditable !== true
       ) {{
         dispatchClick(comp.bodyBox);
+        if (comp.bodyBox.parentElement) {{
+          dispatchClick(comp.bodyBox.parentElement);
+        }}
         try {{ comp.bodyBox.focus(); }} catch (_) {{}}
-        if (attempts < 20) {{
-          setTimeout(step, 200);
+        var activeAfterClick = document.activeElement;
+        if (
+          activeAfterClick &&
+          activeAfterClick !== comp.titleBox &&
+          !looksLikeTitleBox(activeAfterClick) &&
+          (activeAfterClick.tagName === 'TEXTAREA' || activeAfterClick.isContentEditable === true)
+        ) {{
+          comp.bodyBox = activeAfterClick;
+        }} else {{
+          if (attempts < 20) {{
+            setTimeout(step, 200);
+            return;
+          }}
+          setStatus(
+            true,
+            false,
+            'populating',
+            'Campo de conteúdo não ficou editável (' + describeComposerDebug(comp.root) + ')'
+          );
           return;
         }}
-        setStatus(
-          true,
-          false,
-          'populating',
-          'Campo de conteúdo não ficou editável (' + describeComposerDebug(comp.root) + ')'
-        );
-        return;
       }}
 
       if (!comp.bodyBox && !comp.titleBox) {{
@@ -3511,7 +3645,7 @@ fn main() {
                                 }
                                 QuickNoteIpc::Resize { height } => {
                                     if let Some(qn_win) = app_handle.get_window("quick-note") {
-                                        let h = height.clamp(320.0, 560.0);
+                                        let h = height.clamp(320.0, 600.0);
                                         let _ =
                                             qn_win.set_size(tauri::LogicalSize::new(480.0, h));
                                     }
