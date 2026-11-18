@@ -477,7 +477,7 @@ const QUICK_NOTE_HTML: &str = r#"<!DOCTYPE html>
     white-space: normal;
     word-break: break-word;
     user-select: text;
-    max-height: 84px;
+    max-height: 112px;
     overflow-y: auto;
   }
   .error-banner.visible {
@@ -667,14 +667,14 @@ const QUICK_NOTE_HTML: &str = r#"<!DOCTYPE html>
         var extra = 0;
         if (state.paletteOpen) extra += 34;
         if (state.tagsOpen) extra += 136;
-        if (state.errorVisible) extra += 48;
+        if (state.errorVisible) extra += 84;
         if (state.isChecklist) {
           extra += Math.min(Math.max(0, state.items.length - 3) * 28, 120);
         } else {
           var lines = (bodyEl.value.match(/\n/g) || []).length;
           extra += Math.min(Math.max(0, lines - 3) * 20, 110);
         }
-        var targetH = Math.min(590, Math.max(330, 330 + extra));
+        var targetH = Math.min(620, Math.max(330, 330 + extra));
         send({ action: 'resize', height: targetH });
       }
 
@@ -1471,10 +1471,11 @@ fn build_submit_note_js(
 
   function isElementVisible(el) {{
     if (!el) return false;
+    var win = (el.ownerDocument && el.ownerDocument.defaultView) || window;
     var cur = el;
     while (cur && cur.nodeType === 1) {{
       if (cur.getAttribute && cur.getAttribute('aria-hidden') === 'true') return false;
-      var st = window.getComputedStyle(cur);
+      var st = win.getComputedStyle(cur);
       if (st.display === 'none' || st.visibility === 'hidden' || st.opacity === '0') return false;
       cur = cur.parentElement;
     }}
@@ -1488,9 +1489,10 @@ fn build_submit_note_js(
   function isFieldDisplayed(el) {{
     if (!el || el.nodeType !== 1) return false;
     if (el.getAttribute && el.getAttribute('aria-hidden') === 'true') return false;
+    var win = (el.ownerDocument && el.ownerDocument.defaultView) || window;
     var cur = el;
     while (cur && cur.nodeType === 1) {{
-      var st = window.getComputedStyle(cur);
+      var st = win.getComputedStyle(cur);
       if (st.display === 'none' || st.visibility === 'hidden') return false;
       cur = cur.parentElement;
     }}
@@ -1499,18 +1501,33 @@ fn build_submit_note_js(
 
   function dispatchClick(el) {{
     if (!el) return;
+    var doc = el.ownerDocument || document;
+    var win = doc.defaultView || window;
+    var cx = 0;
+    var cy = 0;
+    try {{
+      var rect = el.getBoundingClientRect();
+      if (rect && rect.width > 0 && rect.height > 0) {{
+        cx = rect.left + rect.width / 2;
+        cy = rect.top + rect.height / 2;
+      }}
+    }} catch (_) {{}}
     try {{ el.focus(); }} catch (_) {{}}
     try {{
-      el.dispatchEvent(new PointerEvent('pointerdown', {{ bubbles: true, cancelable: true }}));
+      var PtrEvt = win.PointerEvent || window.PointerEvent;
+      el.dispatchEvent(new PtrEvt('pointerdown', {{ bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 0, buttons: 1 }}));
     }} catch (_) {{}}
     try {{
-      el.dispatchEvent(new MouseEvent('mousedown', {{ bubbles: true, cancelable: true, view: window }}));
+      var MseEvt = win.MouseEvent || window.MouseEvent;
+      el.dispatchEvent(new MseEvt('mousedown', {{ bubbles: true, cancelable: true, view: win, clientX: cx, clientY: cy, button: 0, buttons: 1 }}));
     }} catch (_) {{}}
     try {{
-      el.dispatchEvent(new PointerEvent('pointerup', {{ bubbles: true, cancelable: true }}));
+      var PtrUpEvt = win.PointerEvent || window.PointerEvent;
+      el.dispatchEvent(new PtrUpEvt('pointerup', {{ bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 0, buttons: 0 }}));
     }} catch (_) {{}}
     try {{
-      el.dispatchEvent(new MouseEvent('mouseup', {{ bubbles: true, cancelable: true, view: window }}));
+      var MseUpEvt = win.MouseEvent || window.MouseEvent;
+      el.dispatchEvent(new MseUpEvt('mouseup', {{ bubbles: true, cancelable: true, view: win, clientX: cx, clientY: cy, button: 0, buttons: 0 }}));
     }} catch (_) {{}}
     try {{
       el.click();
@@ -1518,10 +1535,11 @@ fn build_submit_note_js(
   }}
 
   function setNativeInputValue(input, value) {{
+    var win = (input.ownerDocument && input.ownerDocument.defaultView) || window;
     try {{
       var proto = input.tagName === 'TEXTAREA'
-        ? window.HTMLTextAreaElement.prototype
-        : window.HTMLInputElement.prototype;
+        ? win.HTMLTextAreaElement.prototype
+        : win.HTMLInputElement.prototype;
       var desc = Object.getOwnPropertyDescriptor(proto, 'value');
       if (desc && desc.set) {{
         desc.set.call(input, value);
@@ -1532,7 +1550,8 @@ fn build_submit_note_js(
       input.value = value;
     }}
     try {{
-      input.dispatchEvent(new InputEvent('input', {{ bubbles: true, inputType: 'insertText', data: value }}));
+      var InpEvt = win.InputEvent || window.InputEvent;
+      input.dispatchEvent(new InpEvt('input', {{ bubbles: true, inputType: 'insertText', data: value }}));
     }} catch (_) {{
       input.dispatchEvent(new Event('input', {{ bubbles: true }}));
     }}
@@ -1614,12 +1633,72 @@ fn build_submit_note_js(
       try {{
         var all = scope.querySelectorAll('*');
         for (var j = 0; j < all.length; j++) {{
-          if (all[j].shadowRoot) walk(all[j].shadowRoot);
+          var node = all[j];
+          if (node.shadowRoot) walk(node.shadowRoot);
+          if (node.tagName === 'IFRAME') {{
+            try {{
+              var idoc = node.contentDocument || (node.contentWindow && node.contentWindow.document);
+              if (idoc) walk(idoc);
+            }} catch (_) {{}}
+          }}
         }}
       }} catch (_) {{}}
     }}
     walk(root);
     return out;
+  }}
+
+  function getDeepActiveElement() {{
+    var active = document.activeElement;
+    var hops = 0;
+    while (active && hops < 8) {{
+      hops++;
+      if (active.shadowRoot && active.shadowRoot.activeElement) {{
+        active = active.shadowRoot.activeElement;
+        continue;
+      }}
+      if (active.tagName === 'IFRAME') {{
+        try {{
+          var idoc = active.contentDocument || (active.contentWindow && active.contentWindow.document);
+          if (idoc && idoc.activeElement && idoc.activeElement !== idoc.body) {{
+            active = idoc.activeElement;
+            continue;
+          }}
+          if (idoc && idoc.body && (idoc.designMode === 'on' || idoc.body.isContentEditable)) {{
+            active = idoc.body;
+          }}
+        }} catch (_) {{}}
+      }}
+      break;
+    }}
+    return active;
+  }}
+
+  function isEditableElement(el) {{
+    if (!el || el.nodeType !== 1) return false;
+    if (el.tagName === 'TEXTAREA') return true;
+    if (el.tagName === 'INPUT') {{
+      var tp = (el.type || 'text').toLowerCase();
+      return tp === 'text' || tp === 'search' || tp === '';
+    }}
+    return el.isContentEditable === true;
+  }}
+
+  function isNodeInsideRoot(root, node) {{
+    if (!root || !node) return false;
+    try {{
+      if (node.ownerDocument === root.ownerDocument) {{
+        return root === node || root.contains(node);
+      }}
+      var frames = queryAllDeep(root, 'iframe');
+      for (var i = 0; i < frames.length; i++) {{
+        try {{
+          var idoc = frames[i].contentDocument || (frames[i].contentWindow && frames[i].contentWindow.document);
+          if (idoc && (idoc === node.ownerDocument || idoc.body === node)) return true;
+        }} catch (_) {{}}
+      }}
+    }} catch (_) {{}}
+    return false;
   }}
 
   function collectEditableBoxes(root) {{
@@ -1628,17 +1707,27 @@ fn build_submit_note_js(
       root,
       '[contenteditable="true"], [contenteditable=""], [contenteditable="plaintext-only"], textarea'
     );
+    var iframes = queryAllDeep(root, 'iframe');
+    for (var f = 0; f < iframes.length; f++) {{
+      try {{
+        if (!isFieldDisplayed(iframes[f])) continue;
+        var idoc = iframes[f].contentDocument || (iframes[f].contentWindow && iframes[f].contentWindow.document);
+        if (idoc && idoc.body && (idoc.designMode === 'on' || idoc.body.isContentEditable === true)) {{
+          if (candidates.indexOf(idoc.body) === -1) candidates.push(idoc.body);
+        }}
+      }} catch (_) {{}}
+    }}
     var out = [];
     for (var i = 0; i < candidates.length; i++) {{
       var cand = candidates[i];
       if (!cand || cand.nodeType !== 1) continue;
-      if (cand.getAttribute('role') === 'button') continue;
+      if (cand.getAttribute && cand.getAttribute('role') === 'button') continue;
       if (cand.closest && cand.closest('[role="dialog"]') && root === document) continue;
-      if (cand.tagName !== 'TEXTAREA' && cand.isContentEditable !== true) continue;
+      if (!isEditableElement(cand)) continue;
       if (!isFieldDisplayed(cand)) continue;
       var nested = false;
       for (var u = 0; u < out.length; u++) {{
-        if (out[u] === cand || out[u].contains(cand)) {{
+        if (out[u].ownerDocument === cand.ownerDocument && (out[u] === cand || out[u].contains(cand))) {{
           nested = true;
           break;
         }}
@@ -1650,11 +1739,36 @@ fn build_submit_note_js(
     return out;
   }}
 
+  function isPlaceholderEl(el) {{
+    return !!(el && el.classList && el.classList.contains('LwH6nd'));
+  }}
+
+  function isSameTitleRow(el, titleBox) {{
+    if (!el || !titleBox) return false;
+    if (el === titleBox) return true;
+    try {{
+      if (el.ownerDocument === titleBox.ownerDocument) {{
+        if (el.contains(titleBox) || titleBox.contains(el)) return true;
+        var titleRow = titleBox.closest && titleBox.closest('.IZ65Hb-r4nke-haAclf, .r4nke-haAclf');
+        if (titleRow && (el === titleRow || titleRow.contains(el))) return true;
+        if (isPlaceholderEl(el) && titleBox.parentElement && titleBox.parentElement.contains(el)) return true;
+      }}
+    }} catch (_) {{}}
+    return false;
+  }}
+
   function looksLikeTitleBox(box) {{
     if (!box) return false;
-    if (box.classList && box.classList.contains('r4nke-YPqjbf')) return true;
-    var bal = (box.getAttribute('aria-label') || '').toLowerCase();
-    var ph = (box.getAttribute('data-placeholder') || box.getAttribute('placeholder') || '').toLowerCase();
+    if (
+      box.classList &&
+      (box.classList.contains('r4nke-YPqjbf') ||
+        box.classList.contains('r4nke-haAclf') ||
+        box.classList.contains('IZ65Hb-r4nke-haAclf'))
+    ) {{
+      return true;
+    }}
+    var bal = (box.getAttribute && box.getAttribute('aria-label') || '').toLowerCase();
+    var ph = ((box.getAttribute && (box.getAttribute('data-placeholder') || box.getAttribute('placeholder'))) || '').toLowerCase();
     if (
       bal.indexOf('título') !== -1 ||
       bal.indexOf('titulo') !== -1 ||
@@ -1665,6 +1779,10 @@ fn build_submit_note_js(
     ) {{
       return true;
     }}
+    if (isPlaceholderEl(box)) {{
+      var ownTxt = (box.textContent || '').trim().toLowerCase();
+      if (ownTxt === 'título' || ownTxt === 'titulo' || ownTxt === 'title') return true;
+    }}
     var parentTxt = (box.parentElement ? box.parentElement.textContent || '' : '').trim().toLowerCase();
     return parentTxt === 'título' || parentTxt === 'titulo' || parentTxt === 'title';
   }}
@@ -1672,8 +1790,8 @@ fn build_submit_note_js(
   function looksLikeBodyBox(box) {{
     if (!box) return false;
     if (box.classList && box.classList.contains('h1U9Be-YPqjbf')) return true;
-    var bal = (box.getAttribute('aria-label') || '').toLowerCase();
-    var ph = (box.getAttribute('data-placeholder') || box.getAttribute('placeholder') || '').toLowerCase();
+    var bal = (box.getAttribute && box.getAttribute('aria-label') || '').toLowerCase();
+    var ph = ((box.getAttribute && (box.getAttribute('data-placeholder') || box.getAttribute('placeholder'))) || '').toLowerCase();
     var combined = bal + ' ' + ph;
     if (
       combined.indexOf('criar uma nota') !== -1 ||
@@ -1727,84 +1845,160 @@ fn build_submit_note_js(
       '[aria-label*="Adicionar uma nota" i]',
       '[data-placeholder*="Criar uma nota" i]',
       '[data-placeholder*="Take a note" i]',
-      '.IZ65Hb-YPqjbf',
+      '.IZ65Hb-vIzZGf-L9AdLc-haAclf [contenteditable="true"]',
+      '.IZ65Hb-vIzZGf-L9AdLc-haAclf [contenteditable=""]',
+      '.IZ65Hb-vIzZGf-L9AdLc-haAclf textarea',
+      '.IZ65Hb-vIzZGf-L9AdLc-haAclf [role="textbox"]',
+      '.IZ65Hb-YPqjbf:not(.LwH6nd):not(.r4nke-YPqjbf)',
       '[role="textbox"]:not([role="button"])',
       '[aria-multiline="true"]',
       '[contenteditable]:not([contenteditable="false"])',
       'textarea'
     ];
-    var bestEditable = null;
-    var bestAny = null;
     for (var s = 0; s < selectors.length; s++) {{
       var nodes = queryAllDeep(root, selectors[s]);
       for (var i = 0; i < nodes.length; i++) {{
         var n = nodes[i];
-        if (!n || n === titleBox) continue;
-        if (titleBox && (n.contains(titleBox) || titleBox.contains(n))) continue;
+        if (!n || isSameTitleRow(n, titleBox) || looksLikeTitleBox(n) || isPlaceholderEl(n)) continue;
         if (n.getAttribute && n.getAttribute('role') === 'button') continue;
-        if (looksLikeTitleBox(n)) continue;
         if (!isFieldDisplayed(n)) continue;
         var innerEd = n.querySelector && n.querySelector('[contenteditable="true"], [contenteditable=""], textarea');
-        var candidate = (innerEd && innerEd !== titleBox && isFieldDisplayed(innerEd)) ? innerEd : n;
-        if (candidate.tagName === 'TEXTAREA' || candidate.isContentEditable === true) {{
-          if (!bestEditable) bestEditable = candidate;
-        }} else if (!bestAny) {{
-          bestAny = candidate;
+        var candidate = (innerEd && !isSameTitleRow(innerEd, titleBox) && isFieldDisplayed(innerEd)) ? innerEd : n;
+        if (isEditableElement(candidate)) {{
+          return candidate;
         }}
       }}
-      if (bestEditable) return bestEditable;
     }}
 
-    var active = document.activeElement;
+    var iframes = queryAllDeep(root, 'iframe');
+    for (var f = 0; f < iframes.length; f++) {{
+      try {{
+        if (!isFieldDisplayed(iframes[f])) continue;
+        var idoc = iframes[f].contentDocument || (iframes[f].contentWindow && iframes[f].contentWindow.document);
+        if (idoc && idoc.body && (idoc.designMode === 'on' || idoc.body.isContentEditable === true)) {{
+          return idoc.body;
+        }}
+      }} catch (_) {{}}
+    }}
+
+    var active = getDeepActiveElement();
     if (
       active &&
       active !== document.body &&
-      active !== titleBox &&
-      (!titleBox || (!active.contains(titleBox) && !titleBox.contains(active))) &&
-      root.contains(active) &&
+      !isSameTitleRow(active, titleBox) &&
       !looksLikeTitleBox(active) &&
-      (active.tagName === 'TEXTAREA' || active.isContentEditable === true)
+      !isPlaceholderEl(active) &&
+      isNodeInsideRoot(root, active) &&
+      isEditableElement(active)
     ) {{
       return active;
     }}
 
-    if (!bestAny) {{
-      var textEls = root.querySelectorAll('div, span, p');
-      for (var k = 0; k < textEls.length; k++) {{
-        var el = textEls[k];
-        if (el.children.length > 0) continue;
-        var txt = (el.textContent || '').replace(/\u2026/g, '...').replace(/\s+/g, ' ').trim().toLowerCase();
-        if (txt === 'criar uma nota...' || txt === 'criar uma nota' || txt === 'take a note...' || txt === 'take a note') {{
-          var host = el.closest('[role="textbox"], [contenteditable], .IZ65Hb-YPqjbf') || el.parentElement;
-          if (host && host !== titleBox && (!titleBox || (!host.contains(titleBox) && !titleBox.contains(host)))) {{
-            bestAny = host;
-            break;
-          }}
+    var triggerSelectors = [
+      '.h1U9Be-YPqjbf',
+      '[aria-label*="Criar uma nota" i]',
+      '[aria-label*="Take a note" i]',
+      '[aria-label*="Adicionar uma nota" i]',
+      '[data-placeholder*="Criar uma nota" i]',
+      '[data-placeholder*="Take a note" i]'
+    ];
+    for (var ts = 0; ts < triggerSelectors.length; ts++) {{
+      var tNodes = queryAllDeep(root, triggerSelectors[ts]);
+      for (var ti = 0; ti < tNodes.length; ti++) {{
+        var tn = tNodes[ti];
+        if (!tn || isSameTitleRow(tn, titleBox) || looksLikeTitleBox(tn)) continue;
+        if (tn.getAttribute && tn.getAttribute('role') === 'button') continue;
+        if (isFieldDisplayed(tn)) return tn;
+      }}
+    }}
+
+    var textEls = queryAllDeep(root, 'div, span, p');
+    for (var k = 0; k < textEls.length; k++) {{
+      var el = textEls[k];
+      if (!el || el.children.length > 0 || isSameTitleRow(el, titleBox) || looksLikeTitleBox(el)) continue;
+      var txt = (el.textContent || '').replace(/\u2026/g, '...').replace(/\s+/g, ' ').trim().toLowerCase();
+      if (
+        txt === 'criar uma nota...' ||
+        txt === 'criar uma nota' ||
+        txt === 'take a note...' ||
+        txt === 'take a note' ||
+        txt === 'adicionar uma nota...' ||
+        txt === 'add a note...'
+      ) {{
+        var host = (el.closest && el.closest('.IZ65Hb-vIzZGf-L9AdLc-haAclf, [role="textbox"], [tabindex], [contenteditable], .h1U9Be-YPqjbf')) || el.parentElement || el;
+        if (host && !isSameTitleRow(host, titleBox) && !looksLikeTitleBox(host) && isFieldDisplayed(host)) {{
+          return host;
         }}
       }}
     }}
-    return bestAny;
+
+    var bodyWrappers = queryAllDeep(root, '.IZ65Hb-vIzZGf-L9AdLc-haAclf');
+    for (var w = 0; w < bodyWrappers.length; w++) {{
+      var wrap = bodyWrappers[w];
+      if (!wrap || isSameTitleRow(wrap, titleBox) || !isFieldDisplayed(wrap)) continue;
+      var innerTarget = wrap.querySelector('[tabindex], [role="textbox"], iframe, textarea, input, [contenteditable="true"], [contenteditable=""]');
+      if (innerTarget && isFieldDisplayed(innerTarget)) return innerTarget;
+      return wrap;
+    }}
+
+    var secondarySelectors = [
+      '.IZ65Hb-YPqjbf:not(.LwH6nd):not(.r4nke-YPqjbf)',
+      '[role="textbox"]:not([role="button"])',
+      '[aria-multiline="true"]'
+    ];
+    for (var ss = 0; ss < secondarySelectors.length; ss++) {{
+      var sNodes = queryAllDeep(root, secondarySelectors[ss]);
+      for (var si = 0; si < sNodes.length; si++) {{
+        var sn = sNodes[si];
+        if (!sn || isSameTitleRow(sn, titleBox) || looksLikeTitleBox(sn) || isPlaceholderEl(sn)) continue;
+        if (sn.getAttribute && sn.getAttribute('role') === 'button') continue;
+        if (isFieldDisplayed(sn)) return sn;
+      }}
+    }}
+
+    return null;
   }}
 
   function describeComposerDebug(root) {{
     try {{
-      var scope = (root && root.closest && root.closest('.IZ65Hb-n0tgWb, .IZ65Hb-TBnied')) || root;
+      var outer = root && root.closest && root.closest('.IZ65Hb-n0tgWb');
+      var inner = root && root.closest && root.closest('.IZ65Hb-TBnied');
+      var scope = (outer && countCloseButtons(outer) <= 1 ? outer : null) || inner || root;
       if (!scope) return 'sem root';
       var all = queryAllDeep(
         scope,
-        '[contenteditable], [role="textbox"], [aria-multiline], textarea, .IZ65Hb-YPqjbf, .h1U9Be-YPqjbf, .r4nke-YPqjbf'
+        '[contenteditable], [role="textbox"], [aria-multiline], textarea, iframe, .IZ65Hb-YPqjbf, .h1U9Be-YPqjbf, .r4nke-YPqjbf, .IZ65Hb-vIzZGf-L9AdLc-haAclf'
       );
       var parts = [];
       for (var i = 0; i < all.length && parts.length < 6; i++) {{
         var el = all[i];
-        var cls = (typeof el.className === 'string' ? el.className : '').split(/\s+/).slice(0, 2).join('.');
+        var cls = (typeof el.className === 'string' ? el.className : '').trim().replace(/\s+/g, '.');
         var ce = el.getAttribute && el.getAttribute('contenteditable');
+        var role = (el.getAttribute && el.getAttribute('role')) || '';
         var aria = (el.getAttribute && el.getAttribute('aria-label')) || '';
-        var ah = (el.getAttribute && el.getAttribute('aria-hidden')) || '';
-        var disp = window.getComputedStyle(el).display;
-        parts.push(el.tagName + '(' + cls + ',ce=' + ce + ',ed=' + !!el.isContentEditable + ',ah=' + ah + ',d=' + disp + ',al=' + aria + ')');
+        var txt = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 18);
+        var disp = ((el.ownerDocument && el.ownerDocument.defaultView) || window).getComputedStyle(el).display;
+        parts.push(el.tagName + '(' + cls + ',ce=' + ce + ',ed=' + !!el.isContentEditable + ',r=' + role + ',d=' + disp + ',al=' + aria + ',t=' + txt + ')');
       }}
-      return 'n=' + all.length + ' ' + parts.join('; ');
+      var extra = '';
+      var bodyWrap = scope.querySelector && scope.querySelector('.IZ65Hb-vIzZGf-L9AdLc-haAclf');
+      if (bodyWrap) {{
+        var br = bodyWrap.getBoundingClientRect ? bodyWrap.getBoundingClientRect() : {{ width: 0, height: 0 }};
+        var kids = bodyWrap.querySelectorAll('*');
+        var kInfo = [];
+        for (var k = 0; k < kids.length && k < 4; k++) {{
+          var kd = kids[k];
+          var kcls = (typeof kd.className === 'string' ? kd.className : '').trim().replace(/\s+/g, '.');
+          var kti = (kd.getAttribute && kd.getAttribute('tabindex')) || '';
+          var ktxt = (kd.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 16);
+          kInfo.push(kd.tagName + '(' + kcls + ',ti=' + kti + ',t=' + ktxt + ')');
+        }}
+        extra += ' bw=[kids=' + kids.length + ',sz=' + Math.round(br.width) + 'x' + Math.round(br.height) + (kInfo.length ? ',' + kInfo.join('|') : '') + ']';
+      }}
+      var ifrCount = queryAllDeep(scope, 'iframe').length;
+      var act = getDeepActiveElement();
+      var actCls = act && typeof act.className === 'string' ? act.className.trim().replace(/\s+/g, '.') : '';
+      return 'n=' + all.length + ' ifr=' + ifrCount + ' act=' + (act ? act.tagName + '(' + actCls + ',ed=' + !!act.isContentEditable + ')' : 'none') + extra + ' :: ' + parts.join('; ');
     }} catch (_) {{
       return 'debug-err';
     }}
@@ -1887,7 +2081,7 @@ fn build_submit_note_js(
             }}
           }}
           var compObj = {{ root: chosenRoot, titleBox: titleBox, bodyBox: bodyBox, closeBtn: btn }};
-          if (titleBox && bodyBox && titleBox !== bodyBox) {{
+          if (titleBox && bodyBox && titleBox !== bodyBox && isEditableElement(bodyBox)) {{
             return compObj;
           }}
           if (!fallbackPartial) {{
@@ -1920,6 +2114,8 @@ fn build_submit_note_js(
   function insertIntoEditable(el, value) {{
     if (!el) return false;
     if (!value) return true;
+    var doc = el.ownerDocument || document;
+    var win = doc.defaultView || window;
     var normalizedExpected = String(value).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 
     dispatchClick(el);
@@ -1931,14 +2127,14 @@ fn build_submit_note_js(
     }}
 
     function clearEditableSelection() {{
-      var sel = window.getSelection();
-      var range = document.createRange();
+      var sel = win.getSelection ? win.getSelection() : window.getSelection();
+      var range = doc.createRange();
       range.selectNodeContents(el);
       sel.removeAllRanges();
       sel.addRange(range);
-      if (typeof document.execCommand === 'function' && (el.textContent || '').length > 0) {{
-        document.execCommand('selectAll', false, null);
-        document.execCommand('delete', false, null);
+      if (typeof doc.execCommand === 'function' && (el.textContent || '').length > 0) {{
+        doc.execCommand('selectAll', false, null);
+        doc.execCommand('delete', false, null);
       }} else {{
         range.collapse(true);
         sel.removeAllRanges();
@@ -1948,7 +2144,8 @@ fn build_submit_note_js(
 
     function notifyInput() {{
       try {{
-        el.dispatchEvent(new InputEvent('input', {{
+        var InpEvt = win.InputEvent || window.InputEvent;
+        el.dispatchEvent(new InpEvt('input', {{
           bubbles: true,
           inputType: 'insertText',
           data: normalizedExpected
@@ -1961,8 +2158,8 @@ fn build_submit_note_js(
 
     try {{
       clearEditableSelection();
-      if (typeof document.execCommand === 'function') {{
-        var ok = document.execCommand('insertText', false, normalizedExpected);
+      if (typeof doc.execCommand === 'function') {{
+        var ok = doc.execCommand('insertText', false, normalizedExpected);
         if (ok && containsExpectedText(el, normalizedExpected)) {{
           notifyInput();
           return true;
@@ -1973,10 +2170,10 @@ fn build_submit_note_js(
           var lineOk = true;
           for (var li = 0; li < splitLines.length; li++) {{
             if (li > 0) {{
-              document.execCommand('insertLineBreak', false, null);
+              doc.execCommand('insertLineBreak', false, null);
             }}
             if (splitLines[li].length > 0) {{
-              if (!document.execCommand('insertText', false, splitLines[li])) {{
+              if (!doc.execCommand('insertText', false, splitLines[li])) {{
                 lineOk = false;
               }}
             }}
@@ -1991,9 +2188,11 @@ fn build_submit_note_js(
 
     try {{
       clearEditableSelection();
-      var dt = new DataTransfer();
+      var DataTx = win.DataTransfer || window.DataTransfer;
+      var ClipEvt = win.ClipboardEvent || window.ClipboardEvent;
+      var dt = new DataTx();
       dt.setData('text/plain', normalizedExpected);
-      el.dispatchEvent(new ClipboardEvent('paste', {{
+      el.dispatchEvent(new ClipEvt('paste', {{
         bubbles: true,
         cancelable: true,
         clipboardData: dt
@@ -2010,14 +2209,15 @@ fn build_submit_note_js(
     var lines = normalizedExpected.split('\n');
     for (var i = 0; i < lines.length; i++) {{
       if (i > 0) {{
-        el.appendChild(document.createElement('br'));
+        el.appendChild(doc.createElement('br'));
       }}
       if (lines[i].length > 0) {{
-        el.appendChild(document.createTextNode(lines[i]));
+        el.appendChild(doc.createTextNode(lines[i]));
       }}
     }}
     try {{
-      el.dispatchEvent(new InputEvent('beforeinput', {{
+      var BefEvt = win.InputEvent || window.InputEvent;
+      el.dispatchEvent(new BefEvt('beforeinput', {{
         bubbles: true,
         cancelable: true,
         inputType: 'insertText',
@@ -2026,10 +2226,12 @@ fn build_submit_note_js(
     }} catch (_) {{}}
     notifyInput();
     try {{
-      el.dispatchEvent(new CompositionEvent('compositionend', {{ bubbles: true, data: normalizedExpected }}));
+      var CompEvt = win.CompositionEvent || window.CompositionEvent;
+      el.dispatchEvent(new CompEvt('compositionend', {{ bubbles: true, data: normalizedExpected }}));
     }} catch (_) {{}}
-    el.dispatchEvent(new KeyboardEvent('keydown', {{ key: 'a', code: 'KeyA', bubbles: true }}));
-    el.dispatchEvent(new KeyboardEvent('keyup', {{ key: 'a', code: 'KeyA', bubbles: true }}));
+    var KeyEvt = win.KeyboardEvent || window.KeyboardEvent;
+    el.dispatchEvent(new KeyEvt('keydown', {{ key: 'a', code: 'KeyA', bubbles: true }}));
+    el.dispatchEvent(new KeyEvt('keyup', {{ key: 'a', code: 'KeyA', bubbles: true }}));
     return containsExpectedText(el, normalizedExpected);
   }}
 
@@ -2322,6 +2524,10 @@ fn build_submit_note_js(
         : (cfg.body || '').trimEnd();
 
       if (cleanBody && (!comp.bodyBox || comp.bodyBox === comp.titleBox)) {{
+        var bodyWrapHint = comp.root && comp.root.querySelector && comp.root.querySelector('.IZ65Hb-vIzZGf-L9AdLc-haAclf');
+        if (bodyWrapHint) {{
+          dispatchClick(bodyWrapHint);
+        }}
         if (attempts < 18) {{
           setTimeout(step, 200);
           return;
@@ -2338,24 +2544,58 @@ fn build_submit_note_js(
       if (
         cleanBody &&
         comp.bodyBox &&
-        comp.bodyBox.tagName !== 'TEXTAREA' &&
-        comp.bodyBox.isContentEditable !== true
+        !isEditableElement(comp.bodyBox)
       ) {{
+        var outerScope = (comp.root.closest && comp.root.closest('.IZ65Hb-n0tgWb')) || comp.root;
         dispatchClick(comp.bodyBox);
-        if (comp.bodyBox.parentElement) {{
+        if (comp.bodyBox.tagName === 'IFRAME') {{
+          try {{
+            var fdoc = comp.bodyBox.contentDocument || (comp.bodyBox.contentWindow && comp.bodyBox.contentWindow.document);
+            if (fdoc && fdoc.body) dispatchClick(fdoc.body);
+          }} catch (_) {{}}
+        }}
+        var bodyChildren = comp.bodyBox.querySelectorAll ? comp.bodyBox.querySelectorAll('[tabindex], div, span, p') : [];
+        for (var bc = 0; bc < bodyChildren.length && bc < 4; bc++) {{
+          if (!isSameTitleRow(bodyChildren[bc], comp.titleBox) && isFieldDisplayed(bodyChildren[bc])) {{
+            dispatchClick(bodyChildren[bc]);
+          }}
+        }}
+        try {{
+          var br = comp.bodyBox.getBoundingClientRect ? comp.bodyBox.getBoundingClientRect() : null;
+          if (br && br.width > 0 && br.height > 0 && document.elementFromPoint) {{
+            var hit = document.elementFromPoint(br.left + Math.min(br.width / 2, 40), br.top + br.height / 2);
+            if (
+              hit &&
+              hit !== comp.bodyBox &&
+              isNodeInsideRoot(outerScope, hit) &&
+              !isSameTitleRow(hit, comp.titleBox) &&
+              !looksLikeTitleBox(hit) &&
+              (!hit.getAttribute || hit.getAttribute('role') !== 'button')
+            ) {{
+              dispatchClick(hit);
+            }}
+          }}
+        }} catch (_) {{}}
+        if (comp.bodyBox.parentElement && !isSameTitleRow(comp.bodyBox.parentElement, comp.titleBox) && !looksLikeTitleBox(comp.bodyBox.parentElement)) {{
           dispatchClick(comp.bodyBox.parentElement);
         }}
         try {{ comp.bodyBox.focus(); }} catch (_) {{}}
-        var activeAfterClick = document.activeElement;
+
+        var activeAfterClick = getDeepActiveElement();
+        var reProbed = findBodyFallback(outerScope, comp.titleBox);
         if (
           activeAfterClick &&
-          activeAfterClick !== comp.titleBox &&
+          activeAfterClick !== document.body &&
+          !isSameTitleRow(activeAfterClick, comp.titleBox) &&
           !looksLikeTitleBox(activeAfterClick) &&
-          (activeAfterClick.tagName === 'TEXTAREA' || activeAfterClick.isContentEditable === true)
+          !isPlaceholderEl(activeAfterClick) &&
+          isEditableElement(activeAfterClick)
         ) {{
           comp.bodyBox = activeAfterClick;
+        }} else if (reProbed && reProbed !== comp.titleBox && isEditableElement(reProbed)) {{
+          comp.bodyBox = reProbed;
         }} else {{
-          if (attempts < 20) {{
+          if (attempts < 22) {{
             setTimeout(step, 200);
             return;
           }}
@@ -2436,7 +2676,7 @@ fn build_submit_note_js(
     if (trigger) {{
       dispatchClick(trigger);
       var innerBox = trigger.querySelector && trigger.querySelector('[contenteditable="true"], [role="textbox"]');
-      if (innerBox && innerBox !== trigger) {{
+      if (innerBox && innerBox !== trigger && !looksLikeTitleBox(innerBox)) {{
         dispatchClick(innerBox);
       }}
       if (expandSent) {{
@@ -3645,7 +3885,7 @@ fn main() {
                                 }
                                 QuickNoteIpc::Resize { height } => {
                                     if let Some(qn_win) = app_handle.get_window("quick-note") {
-                                        let h = height.clamp(320.0, 600.0);
+                                        let h = height.clamp(320.0, 640.0);
                                         let _ =
                                             qn_win.set_size(tauri::LogicalSize::new(480.0, h));
                                     }
