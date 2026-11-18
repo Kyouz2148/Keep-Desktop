@@ -1455,6 +1455,7 @@ fn build_submit_note_js(
   var attempts = 0;
   var maxAttempts = 45;
   var expandSent = false;
+  var bodyActivateTries = 0;
   var hasLayout = window.innerWidth > 0 && window.innerHeight > 0;
 
   function setStatus(done, ok, stage, detail) {{
@@ -1499,6 +1500,23 @@ fn build_submit_note_js(
     return true;
   }}
 
+  function dispatchFocusEvents(el, related) {{
+    if (!el) return;
+    var doc = el.ownerDocument || document;
+    var win = doc.defaultView || window;
+    try {{ el.focus(); }} catch (_) {{}}
+    try {{
+      var FocEvt = win.FocusEvent || window.FocusEvent;
+      el.dispatchEvent(new FocEvt('focus', {{ bubbles: false, relatedTarget: related || null }}));
+      el.dispatchEvent(new FocEvt('focusin', {{ bubbles: true, relatedTarget: related || null }}));
+    }} catch (_) {{
+      try {{
+        el.dispatchEvent(new Event('focus', {{ bubbles: false }}));
+        el.dispatchEvent(new Event('focusin', {{ bubbles: true }}));
+      }} catch (__) {{}}
+    }}
+  }}
+
   function dispatchClick(el) {{
     if (!el) return;
     var doc = el.ownerDocument || document;
@@ -1512,14 +1530,22 @@ fn build_submit_note_js(
         cy = rect.top + rect.height / 2;
       }}
     }} catch (_) {{}}
-    try {{ el.focus(); }} catch (_) {{}}
     try {{
       var PtrEvt = win.PointerEvent || window.PointerEvent;
-      el.dispatchEvent(new PtrEvt('pointerdown', {{ bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 0, buttons: 1 }}));
+      var MseEvt = win.MouseEvent || window.MouseEvent;
+      el.dispatchEvent(new PtrEvt('pointerover', {{ bubbles: true, cancelable: true, clientX: cx, clientY: cy }}));
+      el.dispatchEvent(new MseEvt('mouseover', {{ bubbles: true, cancelable: true, view: win, clientX: cx, clientY: cy }}));
+      el.dispatchEvent(new PtrEvt('pointerenter', {{ bubbles: false, cancelable: false, clientX: cx, clientY: cy }}));
+      el.dispatchEvent(new MseEvt('mouseenter', {{ bubbles: false, cancelable: false, view: win, clientX: cx, clientY: cy }}));
+    }} catch (_) {{}}
+    dispatchFocusEvents(el, null);
+    try {{
+      var PtrDownEvt = win.PointerEvent || window.PointerEvent;
+      el.dispatchEvent(new PtrDownEvt('pointerdown', {{ bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 0, buttons: 1 }}));
     }} catch (_) {{}}
     try {{
-      var MseEvt = win.MouseEvent || window.MouseEvent;
-      el.dispatchEvent(new MseEvt('mousedown', {{ bubbles: true, cancelable: true, view: win, clientX: cx, clientY: cy, button: 0, buttons: 1 }}));
+      var MseDownEvt = win.MouseEvent || window.MouseEvent;
+      el.dispatchEvent(new MseDownEvt('mousedown', {{ bubbles: true, cancelable: true, view: win, clientX: cx, clientY: cy, button: 0, buttons: 1 }}));
     }} catch (_) {{}}
     try {{
       var PtrUpEvt = win.PointerEvent || window.PointerEvent;
@@ -2119,27 +2145,45 @@ fn build_submit_note_js(
     var normalizedExpected = String(value).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 
     dispatchClick(el);
-    try {{ el.focus(); }} catch (_) {{}}
+    dispatchFocusEvents(el, null);
 
     if (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') {{
       setNativeInputValue(el, normalizedExpected);
       return containsExpectedText(el, normalizedExpected);
     }}
 
-    function clearEditableSelection() {{
+    var hadRichParagraph = !!(
+      (el.querySelector && el.querySelector('p')) ||
+      (el.getAttribute && el.getAttribute('role') === 'combobox')
+    );
+
+    function placeCaretAtStart() {{
       var sel = win.getSelection ? win.getSelection() : window.getSelection();
       var range = doc.createRange();
-      range.selectNodeContents(el);
+      var firstP = el.querySelector && el.querySelector('p');
+      if (firstP) {{
+        range.setStart(firstP, 0);
+      }} else {{
+        range.selectNodeContents(el);
+      }}
+      range.collapse(true);
       sel.removeAllRanges();
       sel.addRange(range);
-      if (typeof doc.execCommand === 'function' && (el.textContent || '').length > 0) {{
-        doc.execCommand('selectAll', false, null);
-        doc.execCommand('delete', false, null);
-      }} else {{
-        range.collapse(true);
+    }}
+
+    function clearEditableSelection() {{
+      var sel = win.getSelection ? win.getSelection() : window.getSelection();
+      if ((el.textContent || '').trim().length > 0) {{
+        var range = doc.createRange();
+        range.selectNodeContents(el);
         sel.removeAllRanges();
         sel.addRange(range);
+        if (typeof doc.execCommand === 'function') {{
+          doc.execCommand('selectAll', false, null);
+          doc.execCommand('delete', false, null);
+        }}
       }}
+      placeCaretAtStart();
     }}
 
     function notifyInput() {{
@@ -2170,7 +2214,11 @@ fn build_submit_note_js(
           var lineOk = true;
           for (var li = 0; li < splitLines.length; li++) {{
             if (li > 0) {{
-              doc.execCommand('insertLineBreak', false, null);
+              if (hadRichParagraph) {{
+                doc.execCommand('insertParagraph', false, null);
+              }} else {{
+                doc.execCommand('insertLineBreak', false, null);
+              }}
             }}
             if (splitLines[li].length > 0) {{
               if (!doc.execCommand('insertText', false, splitLines[li])) {{
@@ -2207,12 +2255,24 @@ fn build_submit_note_js(
       el.removeChild(el.firstChild);
     }}
     var lines = normalizedExpected.split('\n');
-    for (var i = 0; i < lines.length; i++) {{
-      if (i > 0) {{
-        el.appendChild(doc.createElement('br'));
+    if (hadRichParagraph) {{
+      for (var pIdx = 0; pIdx < lines.length; pIdx++) {{
+        var pEl = doc.createElement('p');
+        if (lines[pIdx].length > 0) {{
+          pEl.appendChild(doc.createTextNode(lines[pIdx]));
+        }} else {{
+          pEl.appendChild(doc.createElement('br'));
+        }}
+        el.appendChild(pEl);
       }}
-      if (lines[i].length > 0) {{
-        el.appendChild(doc.createTextNode(lines[i]));
+    }} else {{
+      for (var i = 0; i < lines.length; i++) {{
+        if (i > 0) {{
+          el.appendChild(doc.createElement('br'));
+        }}
+        if (lines[i].length > 0) {{
+          el.appendChild(doc.createTextNode(lines[i]));
+        }}
       }}
     }}
     try {{
@@ -2541,25 +2601,52 @@ fn build_submit_note_js(
         return;
       }}
 
+      var bodyAlreadyPopulated = false;
       if (
         cleanBody &&
         comp.bodyBox &&
         !isEditableElement(comp.bodyBox)
       ) {{
         var outerScope = (comp.root.closest && comp.root.closest('.IZ65Hb-n0tgWb')) || comp.root;
+        if (comp.titleBox) {{
+          try {{ comp.titleBox.blur(); }} catch (_) {{}}
+          try {{
+            comp.titleBox.dispatchEvent(new FocusEvent('blur', {{ bubbles: false, relatedTarget: comp.bodyBox }}));
+            comp.titleBox.dispatchEvent(new FocusEvent('focusout', {{ bubbles: true, relatedTarget: comp.bodyBox }}));
+          }} catch (_) {{}}
+        }}
+        try {{
+          window.dispatchEvent(new FocusEvent('focus', {{ bubbles: false }}));
+        }} catch (_) {{}}
+
         dispatchClick(comp.bodyBox);
+        dispatchFocusEvents(comp.bodyBox, comp.titleBox);
         if (comp.bodyBox.tagName === 'IFRAME') {{
           try {{
             var fdoc = comp.bodyBox.contentDocument || (comp.bodyBox.contentWindow && comp.bodyBox.contentWindow.document);
             if (fdoc && fdoc.body) dispatchClick(fdoc.body);
           }} catch (_) {{}}
         }}
-        var bodyChildren = comp.bodyBox.querySelectorAll ? comp.bodyBox.querySelectorAll('[tabindex], div, span, p') : [];
+        var bodyChildren = comp.bodyBox.querySelectorAll ? comp.bodyBox.querySelectorAll('[tabindex], p, div, span') : [];
         for (var bc = 0; bc < bodyChildren.length && bc < 4; bc++) {{
           if (!isSameTitleRow(bodyChildren[bc], comp.titleBox) && isFieldDisplayed(bodyChildren[bc])) {{
             dispatchClick(bodyChildren[bc]);
+            dispatchFocusEvents(bodyChildren[bc], comp.titleBox);
           }}
         }}
+        try {{
+          var firstPara = comp.bodyBox.querySelector && comp.bodyBox.querySelector('p');
+          if (firstPara) {{
+            var bDoc = comp.bodyBox.ownerDocument || document;
+            var bWin = bDoc.defaultView || window;
+            var bSel = bWin.getSelection ? bWin.getSelection() : window.getSelection();
+            var bRange = bDoc.createRange();
+            bRange.setStart(firstPara, 0);
+            bRange.collapse(true);
+            bSel.removeAllRanges();
+            bSel.addRange(bRange);
+          }}
+        }} catch (_) {{}}
         try {{
           var br = comp.bodyBox.getBoundingClientRect ? comp.bodyBox.getBoundingClientRect() : null;
           if (br && br.width > 0 && br.height > 0 && document.elementFromPoint) {{
@@ -2576,10 +2663,19 @@ fn build_submit_note_js(
             }}
           }}
         }} catch (_) {{}}
-        if (comp.bodyBox.parentElement && !isSameTitleRow(comp.bodyBox.parentElement, comp.titleBox) && !looksLikeTitleBox(comp.bodyBox.parentElement)) {{
+        var isRichWrapper = !!(
+          (comp.bodyBox.classList && comp.bodyBox.classList.contains('IZ65Hb-vIzZGf-L9AdLc-haAclf')) ||
+          (comp.bodyBox.getAttribute && comp.bodyBox.getAttribute('role') === 'combobox')
+        );
+        if (
+          !isRichWrapper &&
+          comp.bodyBox.parentElement &&
+          !isSameTitleRow(comp.bodyBox.parentElement, comp.titleBox) &&
+          !looksLikeTitleBox(comp.bodyBox.parentElement)
+        ) {{
           dispatchClick(comp.bodyBox.parentElement);
         }}
-        try {{ comp.bodyBox.focus(); }} catch (_) {{}}
+        dispatchFocusEvents(comp.bodyBox, comp.titleBox);
 
         var activeAfterClick = getDeepActiveElement();
         var reProbed = findBodyFallback(outerScope, comp.titleBox);
@@ -2595,17 +2691,46 @@ fn build_submit_note_js(
         }} else if (reProbed && reProbed !== comp.titleBox && isEditableElement(reProbed)) {{
           comp.bodyBox = reProbed;
         }} else {{
-          if (attempts < 22) {{
+          bodyActivateTries++;
+          if (bodyActivateTries < 4 && attempts < 22) {{
             setTimeout(step, 200);
             return;
           }}
-          setStatus(
-            true,
-            false,
-            'populating',
-            'Campo de conteúdo não ficou editável (' + describeComposerDebug(comp.root) + ')'
-          );
-          return;
+          var canFallbackEnable = isRichWrapper || looksLikeBodyBox(comp.bodyBox);
+          var pastedOk = false;
+          if (canFallbackEnable) {{
+            try {{
+              var pDoc = comp.bodyBox.ownerDocument || document;
+              var pWin = pDoc.defaultView || window;
+              var PDataTx = pWin.DataTransfer || window.DataTransfer;
+              var PClipEvt = pWin.ClipboardEvent || window.ClipboardEvent;
+              var pDt = new PDataTx();
+              pDt.setData('text/plain', cleanBody);
+              comp.bodyBox.dispatchEvent(new PClipEvt('paste', {{
+                bubbles: true,
+                cancelable: true,
+                clipboardData: pDt
+              }}));
+              pastedOk = containsExpectedText(comp.bodyBox, cleanBody);
+              if (pastedOk) bodyAlreadyPopulated = true;
+            }} catch (_) {{}}
+            if (!pastedOk) {{
+              try {{
+                comp.bodyBox.setAttribute('contenteditable', 'true');
+                comp.bodyBox.contentEditable = 'true';
+                dispatchFocusEvents(comp.bodyBox, comp.titleBox);
+              }} catch (_) {{}}
+            }}
+          }}
+          if (!pastedOk && !isEditableElement(comp.bodyBox)) {{
+            setStatus(
+              true,
+              false,
+              'populating',
+              'Campo de conteúdo não ficou editável (' + describeComposerDebug(comp.root) + ')'
+            );
+            return;
+          }}
         }}
       }}
 
@@ -2654,7 +2779,9 @@ fn build_submit_note_js(
       }}
 
       if (cleanBody && targetBodyBox) {{
-        insertIntoEditable(targetBodyBox, cleanBody);
+        if (!bodyAlreadyPopulated) {{
+          insertIntoEditable(targetBodyBox, cleanBody);
+        }}
         setTimeout(insertTitleStep, 160);
       }} else {{
         insertTitleStep();
