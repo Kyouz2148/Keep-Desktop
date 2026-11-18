@@ -20,12 +20,15 @@ use url::Url;
 use wry::PageLoadEvent;
 
 const KEEP_URL: &str = "https://keep.google.com";
+const GEMINI_URL: &str = "https://gemini.google.com";
+const TOP_BAR_HEIGHT: u32 = 38;
 const MIN_ZOOM: f64 = 0.25;
 const MAX_ZOOM: f64 = 3.0;
 const ZOOM_STEP: f64 = 0.1;
 
 static TRAY_AVAILABLE: AtomicBool = AtomicBool::new(false);
 static NEXT_SUBMIT_ID: AtomicU64 = AtomicU64::new(1);
+static GEMINI_ANIM_GEN: AtomicU64 = AtomicU64::new(1);
 
 #[cfg(target_os = "windows")]
 const AUTOSTART_REG_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
@@ -35,6 +38,244 @@ const AUTOSTART_VALUE_NAME: &str = "GoogleKeepDesktop";
 const AUTOSTART_MENU_LABEL: &str = "Iniciar com o Windows";
 #[cfg(not(target_os = "windows"))]
 const AUTOSTART_MENU_LABEL: &str = "Iniciar com o sistema";
+
+const TOP_BAR_HTML: &str = r#"<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<style>
+  :root {
+    color-scheme: dark;
+    --bar-bg: #202124;
+    --bar-border: rgba(255, 255, 255, 0.09);
+  }
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+  html, body {
+    width: 100%;
+    height: 100%;
+    background: var(--bar-bg);
+    color: #e8eaed;
+    font-family: 'Segoe UI', system-ui, -apple-system, Roboto, sans-serif;
+    overflow: hidden;
+    user-select: none;
+  }
+  .bar {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 12px;
+    border-bottom: 1px solid var(--bar-border);
+    gap: 8px;
+  }
+  .bar.open {
+    border-bottom-color: rgba(138, 180, 248, 0.35);
+  }
+  .left, .center, .right {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #bdc1c6;
+    letter-spacing: 0.1px;
+  }
+  .brand-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #fbbc04;
+    box-shadow: 0 0 6px rgba(251, 188, 4, 0.45);
+  }
+  .pill-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 26px;
+    padding: 0 11px;
+    border-radius: 999px;
+    border: 1px solid rgba(138, 180, 248, 0.32);
+    background: rgba(138, 180, 248, 0.12);
+    color: #d2e3fc;
+    font-size: 12px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.1s;
+  }
+  .pill-btn:hover {
+    background: rgba(138, 180, 248, 0.22);
+    border-color: rgba(138, 180, 248, 0.58);
+    color: #ffffff;
+  }
+  .pill-btn.active {
+    background: linear-gradient(135deg, rgba(66, 133, 244, 0.32), rgba(161, 66, 244, 0.28));
+    border-color: rgba(168, 199, 250, 0.72);
+    color: #ffffff;
+  }
+  .voice-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 26px;
+    padding: 0 11px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    background: rgba(255, 255, 255, 0.06);
+    color: #e8eaed;
+    font-size: 12px;
+    font-weight: 500;
+    font-family: inherit;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.2s;
+  }
+  .voice-btn:hover {
+    background: rgba(255, 255, 255, 0.13);
+    border-color: rgba(255, 255, 255, 0.32);
+  }
+  .voice-btn.active {
+    background: rgba(234, 67, 53, 0.22);
+    border-color: rgba(242, 139, 130, 0.78);
+    color: #fad2cf;
+    box-shadow: 0 0 0 2px rgba(234, 67, 53, 0.18);
+    animation: voicePulse 1.8s infinite;
+  }
+  @keyframes voicePulse {
+    0%, 100% { box-shadow: 0 0 0 1px rgba(234, 67, 53, 0.25); }
+    50% { box-shadow: 0 0 10px 2px rgba(234, 67, 53, 0.42); }
+  }
+  .tool-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    height: 25px;
+    padding: 0 8px;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: transparent;
+    color: #bdc1c6;
+    font-size: 11px;
+    font-weight: 500;
+    font-family: inherit;
+    cursor: pointer;
+    transition: background 0.14s, color 0.14s;
+  }
+  .tool-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #ffffff;
+  }
+  .tool-btn.only-open {
+    display: none;
+  }
+  .bar.open .tool-btn.only-open {
+    display: inline-flex;
+  }
+  .note-btn {
+    border-color: rgba(251, 188, 4, 0.35);
+    color: #fdd663;
+    background: rgba(251, 188, 4, 0.08);
+  }
+  .note-btn:hover {
+    background: rgba(251, 188, 4, 0.18);
+    color: #ffe28a;
+  }
+</style>
+</head>
+<body>
+  <div id="top-bar" class="bar">
+    <div class="left">
+      <div class="brand">
+        <span class="brand-dot"></span>
+        <span>Keep</span>
+      </div>
+    </div>
+    <div class="center">
+      <button id="btn-gemini" class="pill-btn" type="button" title="Descer / Recolher chat do Gemini">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 2L14.6 9.4L22 12L14.6 14.6L12 22L9.4 14.6L2 12L9.4 9.4L12 2Z"/>
+        </svg>
+        <span id="gemini-label">Gemini</span>
+        <span id="gemini-arrow">&#9662;</span>
+      </button>
+      <button id="btn-voice" class="voice-btn" type="button" title="Abrir Gemini e conversar por voz">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+          <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+          <line x1="12" y1="19" x2="12" y2="23"/>
+          <line x1="8" y1="23" x2="16" y2="23"/>
+        </svg>
+        <span id="voice-label">Conversar por voz</span>
+      </button>
+    </div>
+    <div class="right">
+      <button id="btn-size" class="tool-btn only-open" type="button" title="Alternar altura do chat do Gemini">&#8597; Expandir</button>
+      <button id="btn-reload-gemini" class="tool-btn only-open" type="button" title="Recarregar Gemini">&#8635;</button>
+      <button id="btn-quick-note" class="tool-btn note-btn" type="button" title="Nova nota rápida (Ctrl+K)">+ Nota</button>
+    </div>
+  </div>
+  <script>
+    (function () {
+      var bar = document.getElementById('top-bar');
+      var btnGemini = document.getElementById('btn-gemini');
+      var arrowEl = document.getElementById('gemini-arrow');
+      var btnVoice = document.getElementById('btn-voice');
+      var voiceLabel = document.getElementById('voice-label');
+      var btnSize = document.getElementById('btn-size');
+
+      function send(action) {
+        if (window.ipc && typeof window.ipc.postMessage === 'function') {
+          window.ipc.postMessage(JSON.stringify({ action: action }));
+        }
+      }
+
+      window.setTopBarTheme = function (theme) {
+        var bg = '#202124';
+        if (theme === 'amoled') bg = '#000000';
+        else if (theme === 'nord') bg = '#3b4252';
+        else if (theme === 'catppuccin') bg = '#181825';
+        document.documentElement.style.setProperty('--bar-bg', bg);
+      };
+
+      window.setGeminiBarState = function (st) {
+        if (!st) return;
+        bar.classList.toggle('open', !!st.open);
+        btnGemini.classList.toggle('active', !!st.open);
+        arrowEl.textContent = st.open ? '\u25b4' : '\u25be';
+        btnVoice.classList.toggle('active', !!st.voice);
+        voiceLabel.textContent = st.voice ? 'Voz ativa' : 'Conversar por voz';
+        btnSize.textContent = st.expanded ? '\u2195 Médio' : '\u2195 Expandir';
+      };
+
+      btnGemini.addEventListener('click', function () { send('toggle_gemini'); });
+      btnVoice.addEventListener('click', function () { send('toggle_voice'); });
+      btnSize.addEventListener('click', function () { send('toggle_size'); });
+      document.getElementById('btn-reload-gemini').addEventListener('click', function () { send('reload_gemini'); });
+      document.getElementById('btn-quick-note').addEventListener('click', function () { send('quick_note'); });
+    })();
+  </script>
+</body>
+</html>"#;
+
+#[derive(Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+enum TopBarIpc {
+    ToggleGemini,
+    ToggleVoice,
+    ToggleSize,
+    ReloadGemini,
+    QuickNote,
+}
 
 const QUICK_NOTE_HTML: &str = r#"<!DOCTYPE html>
 <html lang="pt-BR">
@@ -584,12 +825,12 @@ const QUICK_NOTE_HTML: &str = r#"<!DOCTYPE html>
       var COLORS = [
         { id: 'default', bg: '#202124', name: 'Padrão', labels: [] },
         { id: 'coral', bg: '#77172e', name: 'Coral', labels: ['Coral', 'Vermelho', 'Red'] },
-        { id: 'peach', bg: '#692b17', name: 'Pêssego', labels: ['Pêssego', 'Peach', 'Laranja', 'Orange'] },
+        { id: 'peach', bg: '#692b17', name: 'Pêssego', labels: ['Pêssego', 'Peach', 'Damasco', 'Laranja', 'Orange'] },
         { id: 'sand', bg: '#7c4a03', name: 'Areia', labels: ['Areia', 'Sand', 'Amarelo', 'Yellow'] },
         { id: 'mint', bg: '#264d3b', name: 'Menta', labels: ['Menta', 'Mint', 'Verde', 'Green'] },
-        { id: 'sage', bg: '#0c625d', name: 'Sálvia', labels: ['Sálvia', 'Sage', 'Azul-petróleo', 'Teal'] },
-        { id: 'fog', bg: '#256377', name: 'Névoa', labels: ['Névoa', 'Fog', 'Azul', 'Blue'] },
-        { id: 'storm', bg: '#284255', name: 'Crepúsculo', labels: ['Crepúsculo', 'Storm', 'Azul-escuro', 'Dark blue'] },
+        { id: 'sage', bg: '#0c625d', name: 'Sálvia', labels: ['Sálvia', 'Sage', 'Verde-azulado', 'Azul-petróleo', 'Turquesa', 'Teal'] },
+        { id: 'fog', bg: '#256377', name: 'Névoa', labels: ['Névoa', 'Fog', 'Azul-claro', 'Azul', 'Blue', 'Light blue'] },
+        { id: 'storm', bg: '#284255', name: 'Crepúsculo', labels: ['Crepúsculo', 'Storm', 'Tempestade', 'Azul-escuro', 'Dark blue'] },
         { id: 'blossom', bg: '#472e5b', name: 'Flor', labels: ['Flor', 'Blossom', 'Roxo', 'Purple'] },
         { id: 'clay', bg: '#6c394f', name: 'Argila', labels: ['Argila', 'Clay', 'Rosa', 'Pink'] },
         { id: 'chalk', bg: '#4b443a', name: 'Giz', labels: ['Giz', 'Chalk', 'Marrom', 'Brown', 'Cinza', 'Gray'] }
@@ -1108,6 +1349,7 @@ const QUICK_NOTE_HTML: &str = r#"<!DOCTYPE html>
             body: bodyEl.value,
             is_checklist: state.isChecklist && cleanItems.length > 0,
             items: cleanItems,
+            color_id: colObj.id,
             color_labels: colObj.labels,
             pinned: state.pinned,
             tags: state.tags
@@ -1239,6 +1481,8 @@ enum QuickNoteIpc {
         is_checklist: bool,
         #[serde(default)]
         items: Vec<ChecklistItemInput>,
+        #[serde(default)]
+        color_id: String,
         #[serde(default)]
         color_labels: Vec<String>,
         #[serde(default)]
@@ -1434,6 +1678,7 @@ fn build_submit_note_js(
     body: &str,
     is_checklist: bool,
     items: &[ChecklistItemInput],
+    color_id: &str,
     color_labels: &[String],
     pinned: bool,
     tags: &[String],
@@ -1447,6 +1692,8 @@ fn build_submit_note_js(
             .collect::<Vec<_>>(),
     )
     .unwrap_or_else(|_| "[]".to_string());
+    let color_id_json =
+        serde_json::to_string(color_id).unwrap_or_else(|_| "\"default\"".to_string());
     let colors_json = serde_json::to_string(color_labels).unwrap_or_else(|_| "[]".to_string());
     let tags_json = serde_json::to_string(tags).unwrap_or_else(|_| "[]".to_string());
 
@@ -2310,13 +2557,92 @@ fn build_submit_note_js(
     return null;
   }}
 
+  var KEEP_COLOR_RGB = {{
+    coral: [[119, 23, 46], [250, 175, 168], [242, 139, 130]],
+    peach: [[105, 43, 23], [243, 159, 118], [251, 188, 4]],
+    sand: [[124, 74, 3], [255, 248, 184], [255, 244, 117]],
+    mint: [[38, 77, 59], [226, 246, 211], [204, 255, 144]],
+    sage: [[12, 98, 93], [180, 221, 211], [167, 255, 235]],
+    fog: [[37, 99, 119], [212, 228, 237], [203, 240, 248]],
+    storm: [[40, 66, 85], [174, 204, 220], [174, 203, 250]],
+    blossom: [[71, 46, 91], [211, 191, 219], [215, 174, 251]],
+    clay: [[108, 57, 79], [246, 226, 221], [253, 207, 232]],
+    chalk: [[75, 68, 58], [233, 227, 212], [230, 201, 168], [232, 234, 237]]
+  }};
+
+  function parseCssRgb(str) {{
+    var m = String(str || '').match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([\d.]+))?/i);
+    if (!m) return null;
+    if (m[4] !== undefined && parseFloat(m[4]) <= 0.05) return null;
+    return [parseInt(m[1], 10), parseInt(m[2], 10), parseInt(m[3], 10)];
+  }}
+
+  function findColorSwatch(colorLabels, colorId) {{
+    var patterns = (colorLabels || []).map(function (s) {{ return String(s || '').toLowerCase(); }}).filter(Boolean);
+    var idLower = String(colorId || '').toLowerCase();
+    if (idLower && idLower !== 'default' && patterns.indexOf(idLower) === -1) {{
+      patterns.push(idLower);
+    }}
+    var nodes = document.querySelectorAll(
+      '[role="button"], [role="menuitem"], [role="menuitemradio"], [role="radio"], [role="option"], button, div[data-tooltip], div[aria-label], [data-color]'
+    );
+
+    for (var pass = 0; pass < 2; pass++) {{
+      for (var p = 0; p < patterns.length; p++) {{
+        var target = patterns[p];
+        for (var i = 0; i < nodes.length; i++) {{
+          var el = nodes[i];
+          if (!isElementVisible(el)) continue;
+          var al = (el.getAttribute('aria-label') || '').trim().toLowerCase();
+          var tt = (el.getAttribute('data-tooltip') || '').trim().toLowerCase();
+          var tl = (el.getAttribute('title') || '').trim().toLowerCase();
+          var dc = (el.getAttribute('data-color') || el.getAttribute('data-value') || '').trim().toLowerCase();
+          var tx = (el.textContent || '').trim().toLowerCase();
+          var exact = (al === target || tt === target || tl === target || dc === target || tx === target);
+          var partial = (al.indexOf(target) !== -1 || tt.indexOf(target) !== -1 || tl.indexOf(target) !== -1 || dc.indexOf(target) !== -1);
+          if (pass === 0 ? exact : partial) {{
+            return el;
+          }}
+        }}
+      }}
+    }}
+
+    var refList = KEEP_COLOR_RGB[idLower];
+    if (refList && refList.length) {{
+      var bestEl = null;
+      var bestDist = 42;
+      for (var j = 0; j < nodes.length; j++) {{
+        var cand = nodes[j];
+        if (!isElementVisible(cand)) continue;
+        var rect = cand.getBoundingClientRect ? cand.getBoundingClientRect() : null;
+        if (!rect || rect.width < 16 || rect.height < 16 || rect.width > 80 || rect.height > 80) continue;
+        var bg = parseCssRgb(window.getComputedStyle(cand).backgroundColor);
+        if (!bg && cand.firstElementChild) {{
+          bg = parseCssRgb(window.getComputedStyle(cand.firstElementChild).backgroundColor);
+        }}
+        if (!bg) continue;
+        for (var r = 0; r < refList.length; r++) {{
+          var ref = refList[r];
+          var d = Math.abs(bg[0] - ref[0]) + Math.abs(bg[1] - ref[1]) + Math.abs(bg[2] - ref[2]);
+          if (d < bestDist) {{
+            bestDist = d;
+            bestEl = cand;
+          }}
+        }}
+      }}
+      if (bestEl) return bestEl;
+    }}
+    return null;
+  }}
+
   function applyColorAndPinAndClose(comp) {{
     var root = comp.root;
+    var outerScope = (root && root.closest && root.closest('.IZ65Hb-n0tgWb, .IZ65Hb-TBnied')) || root;
     var refEl = comp.bodyBox || comp.titleBox;
     setStatus(false, false, 'styling', 'Aplicando opções e fechando nota');
 
     if (cfg.pinned) {{
-      var pinBtn = findButtonByLabels(root, ['fixar nota', 'pin note']);
+      var pinBtn = findButtonByLabels(outerScope, ['fixar nota', 'pin note']) || findButtonByLabels(root, ['fixar nota', 'pin note']);
       if (pinBtn && pinBtn.getAttribute('aria-pressed') !== 'true') {{
         dispatchClick(pinBtn);
       }}
@@ -2324,7 +2650,9 @@ fn build_submit_note_js(
 
     function finishClose() {{
       setStatus(false, false, 'closing', 'Fechando editor para confirmar salvamento');
-      var closeBtn = findButtonByLabels(root, ['fechar', 'close', 'cerrar', 'fermer']) || comp.closeBtn;
+      var closeBtn = findButtonByLabels(outerScope, ['fechar', 'close', 'cerrar', 'fermer'])
+        || findButtonByLabels(root, ['fechar', 'close', 'cerrar', 'fermer'])
+        || comp.closeBtn;
       if (closeBtn && isElementVisible(closeBtn)) {{
         dispatchClick(closeBtn);
         setTimeout(function () {{
@@ -2362,13 +2690,17 @@ fn build_submit_note_js(
       }}
     }}
 
-    function doTagsAndClose() {{
+    function doTagsAndClose(retryMore) {{
       if (cfg.tags && cfg.tags.length > 0) {{
-        var moreBtn = findButtonByLabels(root, ['mais', 'more']);
+        var moreBtn = findButtonByLabels(outerScope, ['mais', 'more']) || findButtonByLabels(root, ['mais', 'more']);
         if (moreBtn) {{
           dispatchClick(moreBtn);
           setTimeout(function () {{
             var addLabelItem = findButtonByLabels(document, ['adicionar marcador', 'alterar marcadores', 'add label', 'change labels', 'marcadores', 'labels']);
+            if (!addLabelItem && !retryMore) {{
+              doTagsAndClose(true);
+              return;
+            }}
             if (addLabelItem) {{
               dispatchClick(addLabelItem);
               setTimeout(function () {{
@@ -2425,87 +2757,328 @@ fn build_submit_note_js(
               return;
             }}
             setTimeout(finishClose, 180);
-          }}, 220);
+          }}, 240);
           return;
         }}
       }}
       finishClose();
     }}
 
-    if (cfg.colorLabels && cfg.colorLabels.length > 0) {{
-      var colorBtn = findButtonByLabels(root, ['opções de plano de fundo', 'background options', 'alterar cor', 'change color']);
+    var hasColorChoice = (cfg.colorId && cfg.colorId !== 'default') || (cfg.colorLabels && cfg.colorLabels.length > 0);
+    if (hasColorChoice) {{
+      var colorBtn = findButtonByLabels(outerScope, ['opções de plano de fundo', 'opções de segundo plano', 'plano de fundo', 'background options', 'alterar cor', 'change color'])
+        || findButtonByLabels(root, ['opções de plano de fundo', 'opções de segundo plano', 'plano de fundo', 'background options', 'alterar cor', 'change color']);
       if (colorBtn) {{
         dispatchClick(colorBtn);
-        setTimeout(function () {{
-          var swatch = findButtonByLabels(document, cfg.colorLabels);
-          if (swatch) dispatchClick(swatch);
-          setTimeout(doTagsAndClose, 180);
-        }}, 180);
+        var tryPickSwatch = function (retrySwatch) {{
+          var swatch = findColorSwatch(cfg.colorLabels, cfg.colorId);
+          if (swatch) {{
+            dispatchClick(swatch);
+            setTimeout(function () {{
+              if (refEl) dispatchClick(refEl);
+              setTimeout(function () {{ doTagsAndClose(false); }}, 160);
+            }}, 180);
+            return;
+          }}
+          if (!retrySwatch) {{
+            setTimeout(function () {{ tryPickSwatch(true); }}, 220);
+            return;
+          }}
+          if (refEl) dispatchClick(refEl);
+          setTimeout(function () {{ doTagsAndClose(false); }}, 160);
+        }};
+        setTimeout(function () {{ tryPickSwatch(false); }}, 260);
         return;
       }}
     }}
-    setTimeout(doTagsAndClose, 140);
+    setTimeout(function () {{ doTagsAndClose(false); }}, 140);
+  }}
+
+  function getChecklistScope(comp) {{
+    if (!comp || !comp.root) return null;
+    return (comp.root.closest && comp.root.closest('.IZ65Hb-n0tgWb, .IZ65Hb-TBnied')) || comp.root;
+  }}
+
+  function hasChecklistUi(scope) {{
+    if (!scope) return false;
+    if (scope.querySelector('[role="checkbox"], [role="listitem"]')) return true;
+    var nodes = queryAllDeep(scope, 'div, span, p');
+    for (var i = 0; i < nodes.length; i++) {{
+      var tx = (nodes[i].textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+      if (tx === 'item da lista' || tx === 'list item' || tx === '+ item da lista' || tx === '+ list item') {{
+        return true;
+      }}
+    }}
+    return false;
+  }}
+
+  function collectChecklistCandidates(scope, titleBox) {{
+    if (!scope) return [];
+    var raw = queryAllDeep(
+      scope,
+      '[role="listitem"] [contenteditable], [role="listitem"] [role="textbox"], [role="listitem"] textarea, [role="listitem"] input[type="text"], .CmABtb-YPqjbf, .IZ65Hb-YPqjbf:not(.LwH6nd):not(.r4nke-YPqjbf), [contenteditable="true"], [contenteditable=""], [role="textbox"]:not([role="button"]), textarea'
+    );
+    var out = [];
+    for (var i = 0; i < raw.length; i++) {{
+      var el = raw[i];
+      if (!el || el.nodeType !== 1) continue;
+      if (el.getAttribute && el.getAttribute('role') === 'button') continue;
+      if (isSameTitleRow(el, titleBox) || looksLikeTitleBox(el) || isPlaceholderEl(el)) continue;
+      if (!isFieldDisplayed(el)) continue;
+      if (out.indexOf(el) === -1) out.push(el);
+    }}
+    return out;
+  }}
+
+  function findChecklistItemTrigger(scope, titleBox) {{
+    if (!scope) return null;
+    var attrSelectors = [
+      '[aria-label*="Item da lista" i]',
+      '[aria-label*="List item" i]',
+      '[data-placeholder*="Item da lista" i]',
+      '[data-placeholder*="List item" i]',
+      '.CmABtb-YPqjbf'
+    ];
+    for (var s = 0; s < attrSelectors.length; s++) {{
+      var found = queryAllDeep(scope, attrSelectors[s]);
+      for (var i = 0; i < found.length; i++) {{
+        var n = found[i];
+        if (!n || isSameTitleRow(n, titleBox) || looksLikeTitleBox(n)) continue;
+        if (n.getAttribute && n.getAttribute('role') === 'button') continue;
+        if (isFieldDisplayed(n)) return n;
+      }}
+    }}
+    var textEls = queryAllDeep(scope, 'div, span, p');
+    for (var k = 0; k < textEls.length; k++) {{
+      var el = textEls[k];
+      if (!el || el.children.length > 0 || isSameTitleRow(el, titleBox) || looksLikeTitleBox(el)) continue;
+      var txt = (el.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+      if (txt === 'item da lista' || txt === 'list item' || txt === '+ item da lista' || txt === '+ list item') {{
+        var host = (el.closest && el.closest('[role="listitem"], .CmABtb-YPqjbf, [role="textbox"], [tabindex], [contenteditable]')) || el.parentElement || el;
+        if (host && !isSameTitleRow(host, titleBox) && !looksLikeTitleBox(host) && isFieldDisplayed(host)) {{
+          return host;
+        }}
+      }}
+    }}
+    return null;
+  }}
+
+  function activateChecklistInput(cand, titleBox) {{
+    if (!cand) return null;
+    try {{
+      window.dispatchEvent(new FocusEvent('focus', {{ bubbles: false }}));
+    }} catch (_) {{}}
+    dispatchClick(cand);
+    dispatchFocusEvents(cand, titleBox || null);
+    if (isEditableElement(cand)) return cand;
+    var inner = cand.querySelector && cand.querySelector('[contenteditable="true"], [contenteditable=""], textarea, input');
+    if (inner && isFieldDisplayed(inner)) {{
+      dispatchClick(inner);
+      dispatchFocusEvents(inner, titleBox || null);
+      if (isEditableElement(inner)) return inner;
+    }}
+    var isItemRow = !!(
+      (cand.closest && cand.closest('[role="listitem"]')) ||
+      (cand.classList && (cand.classList.contains('CmABtb-YPqjbf') || cand.classList.contains('IZ65Hb-YPqjbf'))) ||
+      (cand.getAttribute && ((cand.getAttribute('role') || '') === 'textbox' || (cand.getAttribute('aria-label') || '').toLowerCase().indexOf('lista') !== -1 || (cand.getAttribute('aria-label') || '').toLowerCase().indexOf('list') !== -1))
+    );
+    if (isItemRow) {{
+      try {{
+        cand.setAttribute('contenteditable', 'true');
+        cand.contentEditable = 'true';
+        dispatchFocusEvents(cand, titleBox || null);
+      }} catch (_) {{}}
+    }}
+    return isEditableElement(cand) ? cand : null;
+  }}
+
+  function markMatchingChecklistCheckboxes(scope, items) {{
+    if (!scope || !items) return;
+    var rows = scope.querySelectorAll('[role="listitem"]');
+    for (var i = 0; i < items.length; i++) {{
+      if (!items[i].checked) continue;
+      var needle = String(items[i].text || '').trim().toLowerCase();
+      if (!needle) continue;
+      for (var r = 0; r < rows.length; r++) {{
+        var rowTxt = (rows[r].innerText || rows[r].textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        if (rowTxt.indexOf(needle) !== -1) {{
+          var cb = rows[r].querySelector('[role="checkbox"]');
+          if (cb && cb.getAttribute('aria-checked') !== 'true') {{
+            dispatchClick(cb);
+          }}
+          break;
+        }}
+      }}
+    }}
   }}
 
   function populateChecklistItems(comp) {{
     setStatus(false, false, 'populating', 'Preenchendo itens da lista');
     var titleBox = comp.titleBox;
     var cleanTitle = (cfg.title || '').trim();
-    if (cleanTitle && titleBox) {{
-      insertIntoEditable(titleBox, cleanTitle);
-    }}
-
     var idx = 0;
-    function insertNextItem(retryCount) {{
-      if (idx >= cfg.items.length) {{
+
+    function finishChecklist() {{
+      var latest = findExpandedComposer() || comp;
+      var scope = getChecklistScope(latest) || getChecklistScope(comp);
+      var latestTitleBox = (latest && latest.titleBox) || titleBox;
+
+      var missingCount = 0;
+      for (var v = 0; v < cfg.items.length; v++) {{
+        if (cfg.items[v].text && !containsExpectedText(scope, cfg.items[v].text)) {{
+          missingCount++;
+        }}
+      }}
+
+      if (missingCount > 0 && scope) {{
+        var pasteTarget = null;
+        var cands = collectChecklistCandidates(scope, latestTitleBox);
+        for (var c = 0; c < cands.length; c++) {{
+          if (!(cands[c].textContent || '').trim()) {{
+            pasteTarget = activateChecklistInput(cands[c], latestTitleBox);
+            if (pasteTarget) break;
+          }}
+        }}
+        if (!pasteTarget) {{
+          var trig = findChecklistItemTrigger(scope, latestTitleBox);
+          if (trig) pasteTarget = activateChecklistInput(trig, latestTitleBox);
+        }}
+        if (pasteTarget) {{
+          var joined = cfg.items.map(function (it) {{ return it.text; }}).join('\n');
+          try {{
+            var pDoc = pasteTarget.ownerDocument || document;
+            var pWin = pDoc.defaultView || window;
+            var PDataTx = pWin.DataTransfer || window.DataTransfer;
+            var PClipEvt = pWin.ClipboardEvent || window.ClipboardEvent;
+            var pDt = new PDataTx();
+            pDt.setData('text/plain', joined);
+            pasteTarget.dispatchEvent(new PClipEvt('paste', {{
+              bubbles: true,
+              cancelable: true,
+              clipboardData: pDt
+            }}));
+          }} catch (_) {{}}
+        }}
         setTimeout(function () {{
-          var latest = findExpandedComposer() || comp;
-          applyColorAndPinAndClose(latest);
-        }}, 200);
+          markMatchingChecklistCheckboxes(scope, cfg.items);
+          if (cleanTitle && latestTitleBox && !containsExpectedText(latestTitleBox, cleanTitle)) {{
+            insertIntoEditable(latestTitleBox, cleanTitle);
+          }}
+          var stillMissing = 0;
+          for (var z = 0; z < cfg.items.length; z++) {{
+            if (cfg.items[z].text && !containsExpectedText(scope, cfg.items[z].text)) {{
+              stillMissing++;
+            }}
+          }}
+          if (stillMissing > 0) {{
+            setStatus(
+              true,
+              false,
+              'populating',
+              'Itens da lista não foram inseridos no Keep (' + describeComposerDebug(scope) + ')'
+            );
+            return;
+          }}
+          applyColorAndPinAndClose(findExpandedComposer() || latest);
+        }}, 240);
         return;
       }}
 
+      if (cleanTitle && latestTitleBox && !containsExpectedText(latestTitleBox, cleanTitle)) {{
+        insertIntoEditable(latestTitleBox, cleanTitle);
+      }}
+      setTimeout(function () {{
+        var refreshed = findExpandedComposer() || latest;
+        applyColorAndPinAndClose(refreshed);
+      }}, 180);
+    }}
+
+    function insertNextItem(retryCount) {{
+      if (idx >= cfg.items.length) {{
+        setTimeout(finishChecklist, 200);
+        return;
+      }}
+
+      var latest = findExpandedComposer() || comp;
+      var scope = getChecklistScope(latest) || getChecklistScope(comp);
+      var curTitleBox = (latest && latest.titleBox) || titleBox;
       var item = cfg.items[idx];
-      var inputs = collectEditableBoxes(comp.root);
+      var candidates = collectChecklistCandidates(scope, curTitleBox);
       var targetInput = null;
       var lastInput = null;
-      for (var i = 0; i < inputs.length; i++) {{
-        if (inputs[i] !== titleBox) {{
-          lastInput = inputs[i];
-          if (!(inputs[i].textContent || '').trim()) {{
-            targetInput = inputs[i];
-            break;
-          }}
+
+      for (var i = 0; i < candidates.length; i++) {{
+        lastInput = candidates[i];
+        var candText = (candidates[i].textContent || candidates[i].value || '').replace(/\u200b/g, '').trim();
+        var lowerCand = candText.toLowerCase();
+        var isEmptyOrPrompt = !candText || lowerCand === 'item da lista' || lowerCand === 'list item';
+        if (isEmptyOrPrompt && isEditableElement(candidates[i])) {{
+          targetInput = candidates[i];
+          break;
         }}
       }}
 
-      if (!targetInput && (retryCount || 0) < 4) {{
-        if (lastInput) {{
-          lastInput.focus();
-          lastInput.dispatchEvent(new KeyboardEvent('keydown', {{ key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }}));
-          lastInput.dispatchEvent(new KeyboardEvent('keyup', {{ key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }}));
+      if (!targetInput) {{
+        var triggerEl = findChecklistItemTrigger(scope, curTitleBox);
+        if (triggerEl) {{
+          dispatchClick(triggerEl);
+          dispatchFocusEvents(triggerEl, curTitleBox);
+          if ((retryCount || 0) >= 2) {{
+            targetInput = activateChecklistInput(triggerEl, curTitleBox);
+          }}
         }}
-        setTimeout(function () {{ insertNextItem((retryCount || 0) + 1); }}, 120);
+        if (!targetInput && lastInput && (retryCount || 0) >= 2) {{
+          var lastText = (lastInput.textContent || lastInput.value || '').trim();
+          if (!lastText) {{
+            targetInput = activateChecklistInput(lastInput, curTitleBox);
+          }}
+        }}
+        if (!targetInput && (retryCount || 0) < 4) {{
+          if (lastInput && isEditableElement(lastInput)) {{
+            dispatchFocusEvents(lastInput, curTitleBox);
+            lastInput.dispatchEvent(new KeyboardEvent('keydown', {{ key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }}));
+            lastInput.dispatchEvent(new KeyboardEvent('keyup', {{ key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }}));
+          }}
+          setTimeout(function () {{ insertNextItem((retryCount || 0) + 1); }}, 170);
+          return;
+        }}
+      }}
+
+      if (!targetInput) {{
+        setTimeout(finishChecklist, 150);
         return;
       }}
 
       idx++;
-      if (targetInput) {{
-        insertIntoEditable(targetInput, item.text);
+      insertIntoEditable(targetInput, item.text);
+      var insertedTarget = targetInput;
+      setTimeout(function () {{
         if (item.checked) {{
-          var row = targetInput.closest('[role="listitem"]') || (targetInput.parentElement && targetInput.parentElement.parentElement);
+          var row = insertedTarget.closest && insertedTarget.closest('[role="listitem"]');
+          if (!row && insertedTarget.parentElement) {{
+            row = insertedTarget.parentElement.parentElement || insertedTarget.parentElement;
+          }}
           var cb = row && row.querySelector('[role="checkbox"]');
           if (cb && cb.getAttribute('aria-checked') !== 'true') {{
             dispatchClick(cb);
+          }} else {{
+            markMatchingChecklistCheckboxes(scope, [item]);
           }}
         }}
-        targetInput.dispatchEvent(new KeyboardEvent('keydown', {{ key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }}));
-        targetInput.dispatchEvent(new KeyboardEvent('keyup', {{ key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }}));
-      }}
-      setTimeout(function () {{ insertNextItem(0); }}, 110);
+        if (idx < cfg.items.length) {{
+          dispatchFocusEvents(insertedTarget, null);
+          insertedTarget.dispatchEvent(new KeyboardEvent('keydown', {{ key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }}));
+          insertedTarget.dispatchEvent(new KeyboardEvent('keypress', {{ key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }}));
+          insertedTarget.dispatchEvent(new KeyboardEvent('keyup', {{ key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }}));
+        }}
+        setTimeout(function () {{ insertNextItem(0); }}, 140);
+      }}, 90);
     }}
 
-    setTimeout(function () {{ insertNextItem(0); }}, 140);
+    if (cleanTitle && titleBox) {{
+      insertIntoEditable(titleBox, cleanTitle);
+    }}
+    setTimeout(function () {{ insertNextItem(0); }}, 180);
   }}
 
   function step() {{
@@ -2558,9 +3131,9 @@ fn build_submit_note_js(
     var comp = findExpandedComposer();
     if (comp) {{
       if (cfg.isChecklist && cfg.items && cfg.items.length > 0) {{
-        var hasCheckboxes = !!comp.root.querySelector('[role="checkbox"]');
-        if (!hasCheckboxes) {{
-          var moreBtn = findButtonByLabels(comp.root, ['mais', 'more']);
+        var clScope = getChecklistScope(comp);
+        if (!hasChecklistUi(clScope)) {{
+          var moreBtn = findButtonByLabels(clScope, ['mais', 'more']) || findButtonByLabels(comp.root, ['mais', 'more']);
           if (moreBtn) {{
             dispatchClick(moreBtn);
             setTimeout(function () {{
@@ -2568,8 +3141,8 @@ fn build_submit_note_js(
               if (showCb) dispatchClick(showCb);
               setTimeout(function () {{
                 populateChecklistItems(findExpandedComposer() || comp);
-              }}, 200);
-            }}, 180);
+              }}, 240);
+            }}, 200);
             return;
           }}
         }}
@@ -2836,6 +3409,7 @@ fn build_submit_note_js(
   body: {body_json},
   isChecklist: {is_checklist},
   items: {items_json},
+  colorId: {color_id_json},
   colorLabels: {colors_json},
   pinned: {pinned},
   tags: {tags_json}
@@ -2927,13 +3501,162 @@ impl Default for AppConfig {
     }
 }
 
+const GEMINI_STYLE_JS: &str = r#"(function () {
+  try {
+    var st = document.getElementById('kd-gemini-style');
+    if (!st) {
+      st = document.createElement('style');
+      st.id = 'kd-gemini-style';
+      (document.head || document.documentElement).appendChild(st);
+    }
+    st.textContent = ''
+      + '::-webkit-scrollbar { width: 8px; height: 8px; }'
+      + '::-webkit-scrollbar-track { background: transparent; }'
+      + '::-webkit-scrollbar-thumb { background: rgba(154,160,166,0.32); border-radius: 999px; border: 2px solid transparent; background-clip: content-box; }'
+      + '::-webkit-scrollbar-thumb:hover { background: rgba(154,160,166,0.55); border: 2px solid transparent; background-clip: content-box; }';
+  } catch (_) {}
+})();"#;
+
+fn build_gemini_voice_js(activate: bool) -> String {
+    format!(
+        r#"(function (enableVoice) {{
+  try {{
+    window.__kdGeminiVoiceActive = !!enableVoice;
+
+    function isVisible(el) {{
+      if (!el) return false;
+      var st = window.getComputedStyle(el);
+      if (st.display === 'none' || st.visibility === 'hidden' || st.opacity === '0') return false;
+      var r = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+      return !!(r && r.width > 0 && r.height > 0);
+    }}
+
+    function safeClick(el) {{
+      if (!el) return;
+      try {{ el.focus(); }} catch (_) {{}}
+      try {{ el.click(); }} catch (_) {{}}
+    }}
+
+    function findVoiceButton(patterns) {{
+      var nodes = document.querySelectorAll('button, [role="button"]');
+      for (var p = 0; p < patterns.length; p++) {{
+        var pat = patterns[p];
+        for (var i = 0; i < nodes.length; i++) {{
+          var el = nodes[i];
+          if (!isVisible(el)) continue;
+          if (el.disabled || el.getAttribute('aria-disabled') === 'true') continue;
+          var al = (el.getAttribute('aria-label') || '').toLowerCase();
+          var tt = (el.getAttribute('data-tooltip') || el.getAttribute('mattooltip') || el.getAttribute('title') || '').toLowerCase();
+          var cls = (typeof el.className === 'string' ? el.className : '').toLowerCase();
+          if (al.indexOf(pat) !== -1 || tt.indexOf(pat) !== -1 || (pat === '__mic_cls__' && cls.indexOf('mic') !== -1)) {{
+            return el;
+          }}
+        }}
+      }}
+      return null;
+    }}
+
+    function installAutoSpeakObserver() {{
+      if (window.__kdVoiceObserverInstalled) return;
+      window.__kdVoiceObserverInstalled = true;
+      window.__kdLastSpokenTurn = document.querySelectorAll('model-response, .model-response-text, [data-message-author-role="model"]').length;
+      var debounceTimer = null;
+
+      var checkNewReply = function () {{
+        if (!window.__kdGeminiVoiceActive) return;
+        var stopBtn = findVoiceButton(['interromper', 'stop generating', 'stop response', 'parar geração']);
+        if (stopBtn) return;
+
+        var turns = document.querySelectorAll('model-response, [data-message-author-role="model"], .response-container');
+        if (!turns.length || turns.length <= (window.__kdLastSpokenTurn || 0)) return;
+
+        var latestTurn = turns[turns.length - 1];
+        var listenBtn = null;
+        var btns = latestTurn.querySelectorAll('button, [role="button"]');
+        var listenPats = ['ouvir', 'listen', 'reproduzir', 'read aloud'];
+        for (var i = 0; i < btns.length && !listenBtn; i++) {{
+          if (!isVisible(btns[i])) continue;
+          var al = (btns[i].getAttribute('aria-label') || '').toLowerCase();
+          var tt = (btns[i].getAttribute('data-tooltip') || btns[i].getAttribute('title') || '').toLowerCase();
+          for (var p = 0; p < listenPats.length; p++) {{
+            if (al.indexOf(listenPats[p]) !== -1 || tt.indexOf(listenPats[p]) !== -1) {{
+              listenBtn = btns[i];
+              break;
+            }}
+          }}
+        }}
+        if (listenBtn) {{
+          window.__kdLastSpokenTurn = turns.length;
+          safeClick(listenBtn);
+        }}
+      }};
+
+      var obs = new MutationObserver(function () {{
+        if (!window.__kdGeminiVoiceActive) return;
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(checkNewReply, 750);
+      }});
+      if (document.body) {{
+        obs.observe(document.body, {{ childList: true, subtree: true }});
+      }}
+    }}
+
+    if (!enableVoice) {{
+      var stopListeningBtn = findVoiceButton(['parar gravação', 'stop recording', 'parar de ouvir', 'stop listening', 'desativar microfone', 'mute']);
+      if (stopListeningBtn) safeClick(stopListeningBtn);
+      try {{
+        if (window.speechSynthesis) window.speechSynthesis.cancel();
+      }} catch (_) {{}}
+      return;
+    }}
+
+    installAutoSpeakObserver();
+
+    var tries = 0;
+    function tryActivateVoice() {{
+      tries++;
+      if (!window.__kdGeminiVoiceActive) return;
+      var voiceBtn = findVoiceButton([
+        'gemini live',
+        'conversar com o gemini',
+        'talk to gemini',
+        'usar microfone',
+        'use microphone',
+        'microfone',
+        'microphone',
+        'ditar',
+        'dictate',
+        '__mic_cls__'
+      ]);
+      if (voiceBtn) {{
+        safeClick(voiceBtn);
+        return;
+      }}
+      if (tries < 16) {{
+        setTimeout(tryActivateVoice, 350);
+      }}
+    }}
+    tryActivateVoice();
+  }} catch (_) {{}}
+}})({enable});"#,
+        enable = if activate { "true" } else { "false" }
+    )
+}
+
 struct AppState {
     config: Mutex<AppConfig>,
     config_path: PathBuf,
     cached_labels: Mutex<Vec<String>>,
+    gemini_open: Mutex<bool>,
+    gemini_expanded: Mutex<bool>,
+    gemini_voice_active: Mutex<bool>,
+    gemini_anim_progress: Mutex<f64>,
 }
 
 thread_local! {
+    static TOP_BAR_CONTEXT: RefCell<Option<wry::WebContext>> = const { RefCell::new(None) };
+    static TOP_BAR_WEBVIEW: RefCell<Option<wry::WebView>> = const { RefCell::new(None) };
+    static GEMINI_WEBVIEW: RefCell<Option<wry::WebView>> = const { RefCell::new(None) };
     static KEEP_CONTEXT: RefCell<Option<wry::WebContext>> = const { RefCell::new(None) };
     static KEEP_WEBVIEW: RefCell<Option<wry::WebView>> = const { RefCell::new(None) };
     static QUICK_NOTE_CONTEXT: RefCell<Option<wry::WebContext>> = const { RefCell::new(None) };
@@ -2986,6 +3709,32 @@ fn save_state_config(app: &AppHandle) {
     };
 }
 
+fn with_top_bar_webview<F>(window: &Window, f: F)
+where
+    F: FnOnce(&wry::WebView) + Send + 'static,
+{
+    let _ = window.run_on_main_thread(move || {
+        TOP_BAR_WEBVIEW.with(|cell| {
+            if let Some(wv) = cell.borrow().as_ref() {
+                f(wv);
+            }
+        });
+    });
+}
+
+fn with_gemini_webview<F>(window: &Window, f: F)
+where
+    F: FnOnce(&wry::WebView) + Send + 'static,
+{
+    let _ = window.run_on_main_thread(move || {
+        GEMINI_WEBVIEW.with(|cell| {
+            if let Some(wv) = cell.borrow().as_ref() {
+                f(wv);
+            }
+        });
+    });
+}
+
 fn with_keep_webview<F>(window: &Window, f: F)
 where
     F: FnOnce(&wry::WebView) + Send + 'static,
@@ -3012,6 +3761,311 @@ where
     });
 }
 
+fn sync_top_bar_state(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let open = state.gemini_open.lock().map(|v| *v).unwrap_or(false);
+    let expanded = state.gemini_expanded.lock().map(|v| *v).unwrap_or(false);
+    let voice = state
+        .gemini_voice_active
+        .lock()
+        .map(|v| *v)
+        .unwrap_or(false);
+    let theme = state
+        .config
+        .lock()
+        .map(|cfg| cfg.theme_preset.clone())
+        .unwrap_or_else(|_| "default".to_string());
+    let theme_json = serde_json::to_string(&theme).unwrap_or_else(|_| "\"default\"".to_string());
+    if let Some(win) = app.get_window("main") {
+        with_top_bar_webview(&win, move |wv| {
+            let js = format!(
+                "window.setTopBarTheme && window.setTopBarTheme({theme_json}); window.setGeminiBarState && window.setGeminiBarState({{ open: {open}, expanded: {expanded}, voice: {voice} }});"
+            );
+            let _ = wv.evaluate_script(&js);
+        });
+    }
+}
+
+fn layout_main_webviews_on_thread(window: &Window) {
+    let state = window.app_handle().state::<AppState>();
+    let progress = state
+        .gemini_anim_progress
+        .lock()
+        .map(|v| *v)
+        .unwrap_or(0.0)
+        .clamp(0.0, 1.0);
+    let expanded = state.gemini_expanded.lock().map(|v| *v).unwrap_or(false);
+
+    let phys = window
+        .inner_size()
+        .unwrap_or_else(|_| PhysicalSize::new(1100, 760));
+    let scale = window.scale_factor().unwrap_or(1.0);
+    let bar_h_phys = ((TOP_BAR_HEIGHT as f64) * scale).round().max(30.0) as u32;
+    let avail_h = phys.height.saturating_sub(bar_h_phys);
+    let ratio = if expanded { 0.78 } else { 0.58 };
+    let drawer_h_phys = if progress <= 0.001 {
+        0
+    } else {
+        ((avail_h as f64) * ratio * progress)
+            .round()
+            .clamp(0.0, avail_h as f64) as u32
+    };
+
+    #[cfg(target_os = "windows")]
+    {
+        let keep_h_phys = avail_h.saturating_sub(drawer_h_phys);
+        TOP_BAR_WEBVIEW.with(|cell| {
+            if let Some(wv) = cell.borrow().as_ref() {
+                let _ = wv.set_bounds(wry::Rect {
+                    position: wry::dpi::PhysicalPosition::new(0_i32, 0_i32).into(),
+                    size: wry::dpi::PhysicalSize::new(phys.width, bar_h_phys).into(),
+                });
+            }
+        });
+        GEMINI_WEBVIEW.with(|cell| {
+            if let Some(wv) = cell.borrow().as_ref() {
+                if drawer_h_phys > 4 {
+                    let _ = wv.set_visible(true);
+                    let _ = wv.set_bounds(wry::Rect {
+                        position: wry::dpi::PhysicalPosition::new(0_i32, bar_h_phys as i32).into(),
+                        size: wry::dpi::PhysicalSize::new(phys.width, drawer_h_phys).into(),
+                    });
+                } else {
+                    let _ = wv.set_visible(false);
+                }
+            }
+        });
+        KEEP_WEBVIEW.with(|cell| {
+            if let Some(wv) = cell.borrow().as_ref() {
+                let _ = wv.set_bounds(wry::Rect {
+                    position: wry::dpi::PhysicalPosition::new(
+                        0_i32,
+                        (bar_h_phys + drawer_h_phys) as i32,
+                    )
+                    .into(),
+                    size: wry::dpi::PhysicalSize::new(phys.width, keep_h_phys).into(),
+                });
+            }
+        });
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        use gtk::prelude::*;
+        use wry::WebViewExtUnix;
+
+        let bar_log = TOP_BAR_HEIGHT as i32;
+        TOP_BAR_WEBVIEW.with(|cell| {
+            if let Some(wv) = cell.borrow().as_ref() {
+                wv.webview().set_size_request(-1, bar_log);
+            }
+        });
+        let drawer_h_log = ((drawer_h_phys as f64) / scale).round() as i32;
+        GEMINI_WEBVIEW.with(|cell| {
+            if let Some(wv) = cell.borrow().as_ref() {
+                let gtk_wv = wv.webview();
+                if drawer_h_log > 4 {
+                    gtk_wv.set_size_request(-1, drawer_h_log);
+                    let _ = wv.set_visible(true);
+                } else {
+                    let _ = wv.set_visible(false);
+                }
+            }
+        });
+    }
+}
+
+fn ensure_gemini_webview(app: &AppHandle) {
+    let already_exists = GEMINI_WEBVIEW.with(|cell| cell.borrow().is_some());
+    if already_exists {
+        return;
+    }
+    let Some(main_win) = app.get_window("main") else {
+        return;
+    };
+
+    let page_load_app = app.clone();
+    let apply_common_builder = |builder: wry::WebViewBuilder<'_>| {
+        builder
+            .with_background_color((0x13, 0x13, 0x14, 0xff))
+            .with_devtools(true)
+            .with_clipboard(true)
+            .with_hotkeys_zoom(true)
+            .with_visible(false)
+            .with_permission_handler(|kind| match kind {
+                wry::PermissionKind::Microphone
+                | wry::PermissionKind::ClipboardRead
+                | wry::PermissionKind::Autoplay => wry::PermissionResponse::Allow,
+                _ => wry::PermissionResponse::Default,
+            })
+            .with_new_window_req_handler(|url, _| {
+                let resolved = resolve_target_url(&url);
+                if should_open_gemini_in_app(&resolved) {
+                    wry::NewWindowResponse::Allow
+                } else {
+                    open_external_url(&resolved);
+                    wry::NewWindowResponse::Deny
+                }
+            })
+            .with_on_page_load_handler(move |event, _| {
+                if matches!(event, PageLoadEvent::Finished) {
+                    let voice_active = page_load_app
+                        .state::<AppState>()
+                        .gemini_voice_active
+                        .lock()
+                        .map(|v| *v)
+                        .unwrap_or(false);
+                    if let Some(win) = page_load_app.get_window("main") {
+                        with_gemini_webview(&win, move |wv| {
+                            let _ = wv.evaluate_script(GEMINI_STYLE_JS);
+                            if voice_active {
+                                let voice_js = build_gemini_voice_js(true);
+                                let _ = wv.evaluate_script(&voice_js);
+                            }
+                        });
+                    }
+                }
+            })
+            .with_url(GEMINI_URL)
+    };
+
+    #[cfg(target_os = "windows")]
+    {
+        use wry::{WebViewBuilderExtWindows, WebViewExtWindows};
+
+        let keep_env = KEEP_WEBVIEW.with(|cell| cell.borrow().as_ref().map(|wv| wv.environment()));
+        let Some(env) = keep_env else {
+            return;
+        };
+        let phys = main_win
+            .inner_size()
+            .unwrap_or_else(|_| PhysicalSize::new(1100, 760));
+        let scale = main_win.scale_factor().unwrap_or(1.0);
+        let bar_h_phys = ((TOP_BAR_HEIGHT as f64) * scale).round().max(30.0) as u32;
+        let builder = apply_common_builder(wry::WebViewBuilder::new())
+            .with_environment(env)
+            .with_theme(wry::Theme::Dark)
+            .with_bounds(wry::Rect {
+                position: wry::dpi::PhysicalPosition::new(0_i32, bar_h_phys as i32).into(),
+                size: wry::dpi::PhysicalSize::new(phys.width, 1_u32).into(),
+            });
+        if let Ok(wv) = builder.build_as_child(&main_win) {
+            let _ = wv.set_visible(false);
+            GEMINI_WEBVIEW.with(|cell| {
+                *cell.borrow_mut() = Some(wv);
+            });
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        use gtk::prelude::*;
+        use wry::{WebViewBuilderExtUnix, WebViewExtUnix};
+
+        let Ok(vbox) = main_win.default_vbox() else {
+            return;
+        };
+        let built = KEEP_CONTEXT.with(|ctx_cell| {
+            let mut borrow = ctx_cell.borrow_mut();
+            let ctx = borrow.as_mut()?;
+            let builder = apply_common_builder(wry::WebViewBuilder::new_with_web_context(ctx));
+            builder.build_gtk(&vbox).ok()
+        });
+        if let Some(wv) = built {
+            let gtk_wv = wv.webview();
+            vbox.reorder_child(&gtk_wv, 1);
+            vbox.set_child_packing(&gtk_wv, false, false, 0, gtk::PackType::Start);
+            let _ = wv.set_visible(false);
+            GEMINI_WEBVIEW.with(|cell| {
+                *cell.borrow_mut() = Some(wv);
+            });
+        }
+    }
+}
+
+fn animate_gemini_drawer(app: &AppHandle, target_open: bool) {
+    let gen = GEMINI_ANIM_GEN.fetch_add(1, Ordering::Relaxed) + 1;
+    let start_progress = app
+        .state::<AppState>()
+        .gemini_anim_progress
+        .lock()
+        .map(|v| *v)
+        .unwrap_or(if target_open { 0.0 } else { 1.0 });
+    let end_progress = if target_open { 1.0 } else { 0.0 };
+    let anim_app = app.clone();
+
+    std::thread::spawn(move || {
+        let steps = 6_u32;
+        for step in 1..=steps {
+            if GEMINI_ANIM_GEN.load(Ordering::Relaxed) != gen {
+                return;
+            }
+            let t = (step as f64) / (steps as f64);
+            let eased = 1.0 - (1.0 - t) * (1.0 - t);
+            let cur = start_progress + (end_progress - start_progress) * eased;
+            let step_app = anim_app.clone();
+            let _ = anim_app.run_on_main_thread(move || {
+                if GEMINI_ANIM_GEN.load(Ordering::Relaxed) != gen {
+                    return;
+                }
+                if let Ok(mut p) = step_app.state::<AppState>().gemini_anim_progress.lock() {
+                    *p = cur;
+                }
+                if let Some(win) = step_app.get_window("main") {
+                    layout_main_webviews_on_thread(&win);
+                    if step == steps {
+                        if target_open {
+                            with_gemini_webview(&win, |wv| {
+                                let _ = wv.focus();
+                            });
+                        } else {
+                            with_keep_webview(&win, |wv| {
+                                let _ = wv.focus();
+                            });
+                        }
+                    }
+                }
+            });
+            std::thread::sleep(std::time::Duration::from_millis(24));
+        }
+    });
+}
+
+fn set_gemini_open(app: &AppHandle, open: bool, force_voice: Option<bool>) {
+    let state = app.state::<AppState>();
+    if let Ok(mut g) = state.gemini_open.lock() {
+        *g = open;
+    }
+    if let Some(voice_val) = force_voice {
+        if let Ok(mut v) = state.gemini_voice_active.lock() {
+            *v = voice_val;
+        }
+    } else if !open {
+        if let Ok(mut v) = state.gemini_voice_active.lock() {
+            *v = false;
+        }
+    }
+
+    if open {
+        ensure_gemini_webview(app);
+    }
+
+    let voice_now = state
+        .gemini_voice_active
+        .lock()
+        .map(|v| *v)
+        .unwrap_or(false);
+    if let Some(win) = app.get_window("main") {
+        let voice_js = build_gemini_voice_js(voice_now);
+        with_gemini_webview(&win, move |wv| {
+            let _ = wv.evaluate_script(&voice_js);
+        });
+    }
+
+    sync_top_bar_state(app);
+    animate_gemini_drawer(app, open);
+}
+
 fn apply_main_ui_enhancements(app: &AppHandle) {
     let (theme, compact) = app
         .state::<AppState>()
@@ -3026,6 +4080,7 @@ fn apply_main_ui_enhancements(app: &AppHandle) {
             let _ = wv.evaluate_script(&script);
         });
     }
+    sync_top_bar_state(app);
 }
 
 #[cfg(target_os = "windows")]
@@ -3059,9 +4114,22 @@ fn show_and_focus_window(window: &Window) {
     let _ = window.show();
     let _ = window.unminimize();
     let _ = window.set_focus();
-    with_keep_webview(window, |wv| {
-        let _ = wv.focus();
-    });
+    let gemini_open = window
+        .app_handle()
+        .state::<AppState>()
+        .gemini_open
+        .lock()
+        .map(|v| *v)
+        .unwrap_or(false);
+    if gemini_open {
+        with_gemini_webview(window, |wv| {
+            let _ = wv.focus();
+        });
+    } else {
+        with_keep_webview(window, |wv| {
+            let _ = wv.focus();
+        });
+    }
 }
 
 fn toggle_window(app: &AppHandle) {
@@ -3217,6 +4285,7 @@ fn submit_quick_note_to_keep(
     body: String,
     is_checklist: bool,
     items: Vec<ChecklistItemInput>,
+    color_id: String,
     color_labels: Vec<String>,
     pinned: bool,
     tags: Vec<String>,
@@ -3266,6 +4335,7 @@ fn submit_quick_note_to_keep(
                 &body,
                 is_checklist,
                 &items,
+                &color_id,
                 &color_labels,
                 pinned,
                 &tags,
@@ -3405,6 +4475,28 @@ fn should_open_in_app(raw: &str) -> bool {
                     | "accounts.youtube.com"
                     | "gds.google.com"
                     | "ogs.google.com"
+            )
+        ),
+        _ => false,
+    }
+}
+
+fn should_open_gemini_in_app(raw: &str) -> bool {
+    let Ok(parsed) = Url::parse(raw) else {
+        return true;
+    };
+    match parsed.scheme() {
+        "about" | "blob" | "javascript" | "data" => true,
+        "http" | "https" => matches!(
+            parsed.host_str(),
+            Some(
+                "gemini.google.com"
+                    | "bard.google.com"
+                    | "accounts.google.com"
+                    | "accounts.youtube.com"
+                    | "gds.google.com"
+                    | "ogs.google.com"
+                    | "myaccount.google.com"
             )
         ),
         _ => false,
@@ -3754,6 +4846,7 @@ fn main() {
         )
         .setup(move |app| {
             let data_dir = app.path().app_local_data_dir().ok();
+            let top_bar_data_dir = data_dir.clone().map(|d| d.join("top-bar"));
             let qn_data_dir = data_dir.clone().map(|d| d.join("quick-note"));
             let config_path = data_dir
                 .clone()
@@ -3788,6 +4881,10 @@ fn main() {
                 config: Mutex::new(initial_cfg),
                 config_path,
                 cached_labels: Mutex::new(Vec::new()),
+                gemini_open: Mutex::new(false),
+                gemini_expanded: Mutex::new(false),
+                gemini_voice_active: Mutex::new(false),
+                gemini_anim_progress: Mutex::new(0.0),
             });
 
             // Registra Ctrl+K exclusivamente para abrir a janela rápida de nova nota
@@ -3847,6 +4944,111 @@ fn main() {
                 None::<&str>,
             )?;
 
+            #[cfg(target_os = "windows")]
+            let (win_phys, bar_h_phys, keep_h_phys) = {
+                let win_phys = window
+                    .inner_size()
+                    .unwrap_or_else(|_| PhysicalSize::new(restore_w, restore_h));
+                let win_scale = window.scale_factor().unwrap_or(1.0);
+                let bar_h_phys = ((TOP_BAR_HEIGHT as f64) * win_scale).round().max(30.0) as u32;
+                let keep_h_phys = win_phys.height.saturating_sub(bar_h_phys);
+                (win_phys, bar_h_phys, keep_h_phys)
+            };
+
+            let mut top_bar_context = wry::WebContext::new(top_bar_data_dir);
+            let top_bar_ipc_app = app.handle().clone();
+            let top_bar_load_app = app.handle().clone();
+            let top_bar_webview = {
+                let mut bar_builder = wry::WebViewBuilder::new_with_web_context(&mut top_bar_context)
+                    .with_background_color((0x20, 0x21, 0x24, 0xff))
+                    .with_html(TOP_BAR_HTML)
+                    .with_on_page_load_handler(move |event, _| {
+                        if matches!(event, PageLoadEvent::Finished) {
+                            sync_top_bar_state(&top_bar_load_app);
+                        }
+                    })
+                    .with_ipc_handler(move |req| {
+                        if let Ok(msg) = serde_json::from_str::<TopBarIpc>(req.body()) {
+                            let app_handle = top_bar_ipc_app.clone();
+                            let _ = top_bar_ipc_app.run_on_main_thread(move || match msg {
+                                TopBarIpc::ToggleGemini => {
+                                    let next = !app_handle
+                                        .state::<AppState>()
+                                        .gemini_open
+                                        .lock()
+                                        .map(|v| *v)
+                                        .unwrap_or(false);
+                                    set_gemini_open(&app_handle, next, None);
+                                }
+                                TopBarIpc::ToggleVoice => {
+                                    let state = app_handle.state::<AppState>();
+                                    let was_open = state.gemini_open.lock().map(|v| *v).unwrap_or(false);
+                                    let was_voice = state
+                                        .gemini_voice_active
+                                        .lock()
+                                        .map(|v| *v)
+                                        .unwrap_or(false);
+                                    let next_voice = if !was_open { true } else { !was_voice };
+                                    set_gemini_open(&app_handle, true, Some(next_voice));
+                                }
+                                TopBarIpc::ToggleSize => {
+                                    let state = app_handle.state::<AppState>();
+                                    if let Ok(mut exp) = state.gemini_expanded.lock() {
+                                        *exp = !*exp;
+                                    }
+                                    sync_top_bar_state(&app_handle);
+                                    if let Some(win) = app_handle.get_window("main") {
+                                        layout_main_webviews_on_thread(&win);
+                                    }
+                                }
+                                TopBarIpc::ReloadGemini => {
+                                    if let Some(win) = app_handle.get_window("main") {
+                                        with_gemini_webview(&win, |wv| {
+                                            let _ = wv.reload();
+                                        });
+                                    }
+                                }
+                                TopBarIpc::QuickNote => {
+                                    trigger_quick_note(&app_handle);
+                                }
+                            });
+                        }
+                    });
+
+                #[cfg(target_os = "windows")]
+                {
+                    use wry::WebViewBuilderExtWindows;
+                    bar_builder = bar_builder.with_theme(wry::Theme::Dark).with_bounds(wry::Rect {
+                        position: wry::dpi::PhysicalPosition::new(0_i32, 0_i32).into(),
+                        size: wry::dpi::PhysicalSize::new(win_phys.width, bar_h_phys).into(),
+                    });
+                }
+
+                #[cfg(target_os = "linux")]
+                {
+                    use gtk::prelude::*;
+                    use wry::{WebViewBuilderExtUnix, WebViewExtUnix};
+                    let vbox = window.default_vbox()?;
+                    let wv = bar_builder.build_gtk(&vbox)?;
+                    let gtk_wv = wv.webview();
+                    vbox.set_child_packing(&gtk_wv, false, false, 0, gtk::PackType::Start);
+                    gtk_wv.set_size_request(-1, TOP_BAR_HEIGHT as i32);
+                    let _ = wv.set_visible(true);
+                    wv
+                }
+
+                #[cfg(not(target_os = "linux"))]
+                {
+                    bar_builder.build_as_child(&window)?
+                }
+            };
+            TOP_BAR_CONTEXT.with(|cell| {
+                *cell.borrow_mut() = Some(top_bar_context);
+            });
+            TOP_BAR_WEBVIEW.with(|cell| {
+                *cell.borrow_mut() = Some(top_bar_webview);
+            });
+
             let mut web_context = wry::WebContext::new(data_dir);
             let page_load_app = app.handle().clone();
 
@@ -3856,6 +5058,12 @@ fn main() {
                     .with_devtools(true)
                     .with_clipboard(true)
                     .with_hotkeys_zoom(true)
+                    .with_permission_handler(|kind| match kind {
+                        wry::PermissionKind::Microphone
+                        | wry::PermissionKind::ClipboardRead
+                        | wry::PermissionKind::Autoplay => wry::PermissionResponse::Allow,
+                        _ => wry::PermissionResponse::Default,
+                    })
                     .with_new_window_req_handler(|url, _| {
                         let resolved = resolve_target_url(&url);
                         if should_open_in_app(&resolved) {
@@ -3899,6 +5107,11 @@ fn main() {
                     use wry::WebViewBuilderExtWindows;
                     builder = builder
                         .with_theme(wry::Theme::Dark)
+                        .with_bounds(wry::Rect {
+                            position: wry::dpi::PhysicalPosition::new(0_i32, bar_h_phys as i32)
+                                .into(),
+                            size: wry::dpi::PhysicalSize::new(win_phys.width, keep_h_phys).into(),
+                        })
                         .with_additional_browser_args(
                             "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,ServiceWorkerStaticRouter,ThirdPartyStoragePartitioning,TrackingProtection3pcd --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-renderer-backgrounding",
                         )
@@ -3921,7 +5134,7 @@ fn main() {
 
                 #[cfg(not(target_os = "linux"))]
                 {
-                    builder.build(&window)?
+                    builder.build_as_child(&window)?
                 }
             };
 
@@ -3973,6 +5186,7 @@ fn main() {
                                     body,
                                     is_checklist,
                                     items,
+                                    color_id,
                                     color_labels,
                                     pinned,
                                     tags,
@@ -3983,6 +5197,7 @@ fn main() {
                                         body,
                                         is_checklist,
                                         items,
+                                        color_id,
                                         color_labels,
                                         pinned,
                                         tags,
@@ -4056,6 +5271,13 @@ fn main() {
                 app,
                 "quick_note",
                 "Nova nota rápida (Ctrl+K)",
+                true,
+                None::<&str>,
+            )?;
+            let gemini_item = MenuItem::with_id(
+                app,
+                "gemini",
+                "Chat do Gemini (Descer / Recolher)",
                 true,
                 None::<&str>,
             )?;
@@ -4165,6 +5387,7 @@ fn main() {
                 &[
                     &open_item,
                     &quick_note_item,
+                    &gemini_item,
                     &reload_item,
                     &sep_top,
                     &pin_item,
@@ -4193,6 +5416,26 @@ fn main() {
                 .on_menu_event(move |app, event| match event.id.as_ref() {
                     "open" => toggle_window(app),
                     "quick_note" => trigger_quick_note(app),
+                    "gemini" => {
+                        let was_visible = app
+                            .get_window("main")
+                            .map(|w| {
+                                w.is_visible().unwrap_or(false)
+                                    && !w.is_minimized().unwrap_or(false)
+                            })
+                            .unwrap_or(false);
+                        if let Some(win) = app.get_window("main") {
+                            show_and_focus_window(&win);
+                        }
+                        let cur_open = app
+                            .state::<AppState>()
+                            .gemini_open
+                            .lock()
+                            .map(|v| *v)
+                            .unwrap_or(false);
+                        let next = if !was_visible { true } else { !cur_open };
+                        set_gemini_open(app, next, None);
+                    }
                     "reload" => {
                         if let Some(win) = app.get_window("main") {
                             with_keep_webview(&win, |wv| {
@@ -4342,6 +5585,9 @@ fn main() {
 
             match event {
                 WindowEvent::Resized(size) => {
+                    if size.width > 0 && size.height > 0 {
+                        layout_main_webviews_on_thread(window);
+                    }
                     if !window.is_minimized().unwrap_or(false)
                         && window.is_visible().unwrap_or(false)
                         && size.width >= 320
@@ -4353,6 +5599,9 @@ fn main() {
                             cfg.height = Some(size.height);
                         };
                     }
+                }
+                WindowEvent::ScaleFactorChanged { .. } => {
+                    layout_main_webviews_on_thread(window);
                 }
                 WindowEvent::Moved(pos) => {
                     if !window.is_minimized().unwrap_or(false)

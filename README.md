@@ -31,7 +31,7 @@ O objetivo do **Google Keep Desktop** é oferecer uma janela dedicada, discreta,
 
 ---
 
-## Recursos atuais (`v0.2.11`)
+## Recursos atuais (`v0.2.12`)
 
 <div align="center">
   <img src="docs/tray-menu.jpg" alt="Menu da bandeja do sistema (System Tray) do Google Keep Desktop" width="460" />
@@ -39,13 +39,16 @@ O objetivo do **Google Keep Desktop** é oferecer uma janela dedicada, discreta,
 
 <br />
 
+- **Painel deslizante do Gemini com chat por texto e voz**:
+  - Barra superior integrada com botão **Gemini ▾** que desliza suavemente o chat oficial do Gemini (`https://gemini.google.com`) na parte superior da janela (compartilhando a sessão Google e com opção de expandir/recolher altura).
+  - Botão **Conversar por voz** para abrir o Gemini já ativando entrada de microfone / *Gemini Live* e leitura automática das respostas por voz (com permissão de microfone e áudio liberadas no WebView).
 - **Bandeja do sistema (System Tray) e instância única**:
   - Clique esquerdo no ícone alterna entre mostrar e ocultar a janela.
   - Fechar no `X` apenas oculta o app na bandeja, mantendo sua sessão do Google ativa e abertura instantânea.
   - Garantia de **instância única** (`tauri-plugin-single-instance`): abrir o aplicativo novamente foca a janela existente em vez de duplicar o processo e o ícone na bandeja.
 - **Atalho global de nota rápida (`Ctrl + K`)**:
   - `Ctrl + K` — Abre **apenas uma mini-janela flutuante** (com cantos arredondados nativos no Windows 11, arrastável pelo cabeçalho) sem abrir a janela principal do Keep.
-  - Suporta **seletor de cor** (paleta oficial Keep), **modo checklist** interativo, **fixar no topo**, **seletor de marcadores do Keep** (lista e sincroniza os marcadores existentes e permite criar novos diretamente pelo atalho), **recuperação de rascunho** caso fechada com `Esc`, auto-expansão de altura, validação real de salvamento e envio silencioso (`Ctrl + Enter` salva, `Esc` fecha).
+  - Suporta **seletor de cor/tema** (paleta oficial Keep com correspondência por nome e cor), **modo checklist** interativo (inserção e validação item a item no Keep), **fixar no topo**, **seletor de marcadores do Keep** (lista e sincroniza os marcadores existentes e permite criar novos diretamente pelo atalho), **recuperação de rascunho** caso fechada com `Esc`, auto-expansão de altura, validação real de salvamento e envio silencioso (`Ctrl + Enter` salva, `Esc` fecha).
 - **Personalização visual na janela principal (submenu *Aparência*)**:
   - **Temas**: *Padrão Keep*, *AMOLED (Preto puro)*, *Nord Escuro* e *Catppuccin Mocha*.
   - **Scrollbars escuras e finas** nativas e **Modo Compacto / Foco** (oculta atalhos web extras do Google e recolhe a barra lateral em janelas estreitas).
