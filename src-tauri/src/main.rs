@@ -1443,6 +1443,18 @@ fn build_submit_note_js(
     return true;
   }}
 
+  function isFieldDisplayed(el) {{
+    if (!el || el.nodeType !== 1) return false;
+    if (el.getAttribute && el.getAttribute('aria-hidden') === 'true') return false;
+    var cur = el;
+    while (cur && cur.nodeType === 1) {{
+      var st = window.getComputedStyle(cur);
+      if (st.display === 'none' || st.visibility === 'hidden') return false;
+      cur = cur.parentElement;
+    }}
+    return true;
+  }}
+
   function dispatchClick(el) {{
     if (!el) return;
     try {{ el.focus(); }} catch (_) {{}}
@@ -1465,7 +1477,10 @@ fn build_submit_note_js(
 
   function setNativeInputValue(input, value) {{
     try {{
-      var desc = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value');
+      var proto = input.tagName === 'TEXTAREA'
+        ? window.HTMLTextAreaElement.prototype
+        : window.HTMLInputElement.prototype;
+      var desc = Object.getOwnPropertyDescriptor(proto, 'value');
       if (desc && desc.set) {{
         desc.set.call(input, value);
       }} else {{
@@ -1544,7 +1559,7 @@ fn build_submit_note_js(
   function collectEditableBoxes(root) {{
     if (!root) return [];
     var candidates = root.querySelectorAll(
-      '[contenteditable="true"], [contenteditable=""], [contenteditable="plaintext-only"]'
+      '[contenteditable="true"], [contenteditable=""], [contenteditable="plaintext-only"], textarea'
     );
     var out = [];
     for (var i = 0; i < candidates.length; i++) {{
@@ -1552,8 +1567,8 @@ fn build_submit_note_js(
       if (!cand || cand.nodeType !== 1) continue;
       if (cand.getAttribute('role') === 'button') continue;
       if (cand.closest('[role="dialog"]') && root === document) continue;
-      if (cand.isContentEditable !== true) continue;
-      if (!isElementVisible(cand)) continue;
+      if (cand.tagName !== 'TEXTAREA' && cand.isContentEditable !== true) continue;
+      if (!isFieldDisplayed(cand)) continue;
       var nested = false;
       for (var u = 0; u < out.length; u++) {{
         if (out[u] === cand || out[u].contains(cand)) {{
@@ -1636,6 +1651,58 @@ fn build_submit_note_js(
     return count;
   }}
 
+  function findBodyFallback(root, titleBox) {{
+    if (!root) return null;
+    var selectors = [
+      '.h1U9Be-YPqjbf',
+      '[aria-label*="Criar uma nota" i]',
+      '[aria-label*="Take a note" i]',
+      '[role="textbox"]:not([role="button"])',
+      'textarea'
+    ];
+    var bestEditable = null;
+    var bestAny = null;
+    for (var s = 0; s < selectors.length; s++) {{
+      var nodes = root.querySelectorAll(selectors[s]);
+      for (var i = 0; i < nodes.length; i++) {{
+        var n = nodes[i];
+        if (!n || n === titleBox) continue;
+        if (titleBox && (n.contains(titleBox) || titleBox.contains(n))) continue;
+        if (n.getAttribute('role') === 'button') continue;
+        if (looksLikeTitleBox(n)) continue;
+        if (!isFieldDisplayed(n)) continue;
+        var innerEd = n.querySelector && n.querySelector('[contenteditable="true"], [contenteditable=""], textarea');
+        var candidate = (innerEd && innerEd !== titleBox && isFieldDisplayed(innerEd)) ? innerEd : n;
+        if (candidate.tagName === 'TEXTAREA' || candidate.isContentEditable === true) {{
+          if (!bestEditable) bestEditable = candidate;
+        }} else if (!bestAny) {{
+          bestAny = candidate;
+        }}
+      }}
+      if (bestEditable) return bestEditable;
+    }}
+    return bestAny;
+  }}
+
+  function describeComposerDebug(root) {{
+    try {{
+      if (!root) return 'sem root';
+      var all = root.querySelectorAll('[contenteditable], [role="textbox"], textarea, .h1U9Be-YPqjbf, .r4nke-YPqjbf');
+      var parts = [];
+      for (var i = 0; i < all.length && parts.length < 6; i++) {{
+        var el = all[i];
+        var cls = (typeof el.className === 'string' ? el.className : '').split(/\s+/).slice(0, 2).join('.');
+        var ce = el.getAttribute('contenteditable');
+        var aria = el.getAttribute('aria-label') || '';
+        var ah = el.getAttribute('aria-hidden') || '';
+        parts.push(el.tagName + '(' + cls + ',ce=' + ce + ',ed=' + !!el.isContentEditable + ',ah=' + ah + ',al=' + aria + ')');
+      }}
+      return 'n=' + all.length + ' ' + parts.join('; ');
+    }} catch (_) {{
+      return 'debug-err';
+    }}
+  }}
+
   function findExpandedComposer() {{
     var closeNodes = document.querySelectorAll('[role="button"], button');
     for (var c = 0; c < closeNodes.length; c++) {{
@@ -1656,7 +1723,7 @@ fn build_submit_note_js(
           var chosenBoxes = visibleBoxes;
           if (chosenBoxes.length === 1) {{
             var probeParent = cur.parentElement;
-            for (var extra = 0; extra < 2 && probeParent && probeParent !== document.body; extra++) {{
+            for (var extra = 0; extra < 4 && probeParent && probeParent !== document.body; extra++) {{
               if (countCloseButtons(probeParent) > 1) break;
               var parentBoxes = collectEditableBoxes(probeParent);
               if (parentBoxes.length >= 2 && parentBoxes.length <= 4) {{
@@ -1697,6 +1764,14 @@ fn build_submit_note_js(
               }}
             }}
           }}
+          if (!bodyBox) {{
+            var searchRoot = chosenRoot;
+            var cardRoot = chosenRoot.closest && chosenRoot.closest('.IZ65Hb-TBnied, .IZ65Hb-n0tgWb');
+            if (cardRoot && countCloseButtons(cardRoot) <= 1) {{
+              searchRoot = cardRoot;
+            }}
+            bodyBox = findBodyFallback(searchRoot, titleBox);
+          }}
           return {{ root: chosenRoot, titleBox: titleBox, bodyBox: bodyBox, closeBtn: btn }};
         }}
         cur = cur.parentElement;
@@ -1712,9 +1787,12 @@ fn build_submit_note_js(
     if (!nonEmptyLines.length) return true;
     var firstLine = nonEmptyLines[0];
     var lastLine = nonEmptyLines[nonEmptyLines.length - 1];
-    var firstProbe = firstLine.slice(0, Math.min(20, firstLine.length));
-    var lastProbe = lastLine.slice(0, Math.min(20, lastLine.length));
-    var got = (el.innerText || el.textContent || '').replace(/\r/g, '');
+    var firstProbe = firstLine.slice(0, Math.min(20, firstLine.length)).replace(/[\u00a0\s]+/g, ' ');
+    var lastProbe = lastLine.slice(0, Math.min(20, lastLine.length)).replace(/[\u00a0\s]+/g, ' ');
+    var rawGot = (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT')
+      ? (el.value || '')
+      : (el.innerText || el.textContent || '');
+    var got = rawGot.replace(/\r/g, '').replace(/[\u00a0\s]+/g, ' ');
     return got.indexOf(firstProbe) !== -1 && got.indexOf(lastProbe) !== -1;
   }}
 
@@ -1725,6 +1803,11 @@ fn build_submit_note_js(
 
     dispatchClick(el);
     try {{ el.focus(); }} catch (_) {{}}
+
+    if (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') {{
+      setNativeInputValue(el, normalizedExpected);
+      return containsExpectedText(el, normalizedExpected);
+    }}
 
     function clearEditableSelection() {{
       var sel = window.getSelection();
@@ -2117,8 +2200,38 @@ fn build_submit_note_js(
         ? cfg.items.map(function (i) {{ return i.text; }}).join('\n')
         : (cfg.body || '').trimEnd();
 
-      if (cleanBody && !comp.bodyBox && attempts < 12) {{
-        setTimeout(step, 200);
+      if (cleanBody && (!comp.bodyBox || comp.bodyBox === comp.titleBox)) {{
+        if (attempts < 18) {{
+          setTimeout(step, 200);
+          return;
+        }}
+        setStatus(
+          true,
+          false,
+          'populating',
+          'Campo de conteúdo não encontrado no Keep (' + describeComposerDebug(comp.root) + ')'
+        );
+        return;
+      }}
+
+      if (
+        cleanBody &&
+        comp.bodyBox &&
+        comp.bodyBox.tagName !== 'TEXTAREA' &&
+        comp.bodyBox.isContentEditable !== true
+      ) {{
+        dispatchClick(comp.bodyBox);
+        try {{ comp.bodyBox.focus(); }} catch (_) {{}}
+        if (attempts < 20) {{
+          setTimeout(step, 200);
+          return;
+        }}
+        setStatus(
+          true,
+          false,
+          'populating',
+          'Campo de conteúdo não ficou editável (' + describeComposerDebug(comp.root) + ')'
+        );
         return;
       }}
 
@@ -2127,11 +2240,8 @@ fn build_submit_note_js(
         return;
       }}
 
-      var targetBodyBox = comp.bodyBox || comp.titleBox;
-      var targetTitleBox = comp.titleBox;
-      if (cleanTitle && !targetTitleBox && comp.bodyBox && !cleanBody) {{
-        targetTitleBox = comp.bodyBox;
-      }}
+      var targetBodyBox = comp.bodyBox;
+      var targetTitleBox = comp.titleBox || (!cleanBody ? comp.bodyBox : null);
 
       function finishPopulate() {{
         var bodyVerified = !cleanBody || (targetBodyBox && containsExpectedText(targetBodyBox, cleanBody));
@@ -2140,8 +2250,17 @@ fn build_submit_note_js(
           bodyVerified = containsExpectedText(targetBodyBox, cleanBody);
         }}
         var titleVerified = !cleanTitle || !targetTitleBox || containsExpectedText(targetTitleBox, cleanTitle);
-        if ((cleanBody && !bodyVerified) || (!bodyVerified && !titleVerified)) {{
-          setStatus(true, false, 'populating', 'O editor do Keep não manteve o conteúdo da nota');
+        if (cleanTitle && !titleVerified && targetTitleBox && targetTitleBox !== targetBodyBox) {{
+          insertIntoEditable(targetTitleBox, cleanTitle);
+          titleVerified = containsExpectedText(targetTitleBox, cleanTitle);
+        }}
+        if ((cleanBody && !bodyVerified) || (cleanTitle && targetTitleBox && !titleVerified)) {{
+          setStatus(
+            true,
+            false,
+            'populating',
+            'O editor do Keep não manteve o texto (b=' + bodyVerified + ', t=' + titleVerified + ')'
+          );
           return;
         }}
         var latest = findExpandedComposer() || comp;
@@ -2151,18 +2270,18 @@ fn build_submit_note_js(
       function insertTitleStep() {{
         if (cleanTitle && targetTitleBox && targetTitleBox !== targetBodyBox) {{
           insertIntoEditable(targetTitleBox, cleanTitle);
-          setTimeout(finishPopulate, 160);
-        }} else if (cleanTitle && targetTitleBox === targetBodyBox && !cleanBody) {{
+          setTimeout(finishPopulate, 180);
+        }} else if (cleanTitle && targetTitleBox && !cleanBody) {{
           insertIntoEditable(targetTitleBox, cleanTitle);
-          setTimeout(finishPopulate, 160);
+          setTimeout(finishPopulate, 180);
         }} else {{
-          setTimeout(finishPopulate, 140);
+          setTimeout(finishPopulate, 160);
         }}
       }}
 
       if (cleanBody && targetBodyBox) {{
         insertIntoEditable(targetBodyBox, cleanBody);
-        setTimeout(insertTitleStep, 140);
+        setTimeout(insertTitleStep, 160);
       }} else {{
         insertTitleStep();
       }}
