@@ -6,7 +6,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Mutex,
     },
 };
@@ -25,6 +25,7 @@ const MAX_ZOOM: f64 = 3.0;
 const ZOOM_STEP: f64 = 0.1;
 
 static TRAY_AVAILABLE: AtomicBool = AtomicBool::new(false);
+static NEXT_SUBMIT_ID: AtomicU64 = AtomicU64::new(1);
 
 #[cfg(target_os = "windows")]
 const AUTOSTART_REG_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
@@ -299,7 +300,27 @@ const QUICK_NOTE_HTML: &str = r#"<!DOCTYPE html>
     align-items: center;
     gap: 6px;
   }
+  .tag-refresh-btn {
+    width: 26px;
+    height: 26px;
+    flex-shrink: 0;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.05);
+    color: #bdc1c6;
+    font-size: 13px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s, color 0.15s;
+  }
+  .tag-refresh-btn:hover {
+    background: rgba(255, 255, 255, 0.12);
+    color: #fff;
+  }
   #tag-input {
+    flex: 1;
     width: 100%;
     border: 1px solid rgba(255, 255, 255, 0.14);
     border-radius: 6px;
@@ -501,6 +522,7 @@ const QUICK_NOTE_HTML: &str = r#"<!DOCTYPE html>
       <div id="tags-chips" class="tags-selected"></div>
       <div class="tags-input-row">
         <input id="tag-input" type="text" placeholder="Buscar ou criar marcador (Enter)..." autocomplete="off" />
+        <button id="btn-refresh-labels" class="tag-refresh-btn" type="button" title="Sincronizar marcadores do Keep">&#x21bb;</button>
       </div>
       <div id="labels-list" class="labels-list"></div>
     </div>
@@ -570,6 +592,7 @@ const QUICK_NOTE_HTML: &str = r#"<!DOCTYPE html>
       var btnChecklist = document.getElementById('btn-checklist');
       var btnPalette = document.getElementById('btn-palette');
       var btnTags = document.getElementById('btn-tags');
+      var btnRefreshLabels = document.getElementById('btn-refresh-labels');
       var btnRestore = document.getElementById('btn-restore-draft');
 
       var state = {
@@ -939,6 +962,21 @@ const QUICK_NOTE_HTML: &str = r#"<!DOCTYPE html>
         }, 20);
       };
 
+      window.onQuickNoteSaveError = function (msg) {
+        state.saving = false;
+        hintEl.textContent = msg || 'Não foi possível salvar no Keep';
+        hintEl.className = 'hint warn';
+        requestResize();
+        setTimeout(function () {
+          if (state.isChecklist) {
+            var first = checklistWrap.querySelector('input[type="text"]');
+            if (first) first.focus();
+          } else {
+            bodyEl.focus();
+          }
+        }, 20);
+      };
+
       window.resetQuickNote = function () {
         state.saving = false;
         titleEl.value = '';
@@ -960,6 +998,12 @@ const QUICK_NOTE_HTML: &str = r#"<!DOCTYPE html>
         hintEl.textContent = DEFAULT_HINT;
         hintEl.className = 'hint';
         refreshDraftBadge();
+      };
+
+      window.resetQuickNoteIfSaving = function () {
+        if (state.saving) {
+          window.resetQuickNote();
+        }
       };
 
       btnRestore.addEventListener('click', function () {
@@ -1006,7 +1050,7 @@ const QUICK_NOTE_HTML: &str = r#"<!DOCTYPE html>
           return;
         }
         state.saving = true;
-        hintEl.textContent = 'Enviando para o Keep \u2713';
+        hintEl.textContent = 'Salvando no Keep...';
         hintEl.className = 'hint ok';
         try { localStorage.removeItem(DRAFT_KEY); } catch (_) {}
 
@@ -1026,7 +1070,7 @@ const QUICK_NOTE_HTML: &str = r#"<!DOCTYPE html>
             pinned: state.pinned,
             tags: state.tags
           });
-        }, 160);
+        }, 120);
       }
 
       function closeModal() {
@@ -1056,7 +1100,21 @@ const QUICK_NOTE_HTML: &str = r#"<!DOCTYPE html>
         tagsBar.classList.toggle('visible', state.tagsOpen);
         renderTags();
         requestResize();
-        if (state.tagsOpen) tagInput.focus();
+        if (state.tagsOpen) {
+          send({ action: 'refresh_labels' });
+          tagInput.focus();
+        }
+      });
+
+      btnRefreshLabels.addEventListener('click', function () {
+        send({ action: 'refresh_labels' });
+        hintEl.textContent = 'Buscando marcadores...';
+        hintEl.className = 'hint';
+        setTimeout(function () {
+          if (!state.saving && hintEl.textContent === 'Buscando marcadores...') {
+            hintEl.textContent = DEFAULT_HINT;
+          }
+        }, 1600);
       });
 
       tagInput.addEventListener('input', function () {
@@ -1146,6 +1204,7 @@ enum QuickNoteIpc {
         #[serde(default)]
         tags: Vec<String>,
     },
+    RefreshLabels,
     Close,
     OpenMain,
     Drag,
@@ -1157,33 +1216,56 @@ enum QuickNoteIpc {
 
 const EXTRACT_KEEP_LABELS_JS: &str = r####"(function () {
   try {
-    if (
-      window.location.hostname !== 'keep.google.com' ||
-      document.readyState !== 'complete' ||
-      (!document.querySelector('[role="navigation"]') && !document.querySelector('.IZ65Hb-n0tgWb'))
-    ) {
+    if (window.location.hostname !== 'keep.google.com' || document.readyState !== 'complete') {
       return null;
     }
+    var hasShell = !!(
+      document.querySelector('[role="navigation"], nav, aside') ||
+      document.querySelector('.IZ65Hb-n0tgWb')
+    );
+    if (!hasShell) {
+      return null;
+    }
+
     var seen = Object.create(null);
     var out = [];
     var sysBlocked = {
       'notas': 1, 'notes': 1,
       'lembretes': 1, 'reminders': 1,
-      'editar marcadores': 1, 'edit labels': 1,
+      'editar marcadores': 1, 'edit labels': 1, 'editar etiquetas': 1,
       'arquivo': 1, 'archive': 1,
-      'lixeira': 1, 'trash': 1,
-      'bin': 1,
-      'marcadores': 1, 'labels': 1,
-      'configurações': 1, 'settings': 1,
-      'ajuda e feedback': 1, 'help & feedback': 1,
+      'lixeira': 1, 'trash': 1, 'bin': 1, 'papelera': 1,
+      'marcadores': 1, 'labels': 1, 'etiquetas': 1,
+      'configurações': 1, 'configuracoes': 1, 'settings': 1,
+      'ajuda e feedback': 1, 'help & feedback': 1, 'ajuda': 1, 'help': 1,
       'enviar feedback': 1, 'send feedback': 1,
       'atalhos do teclado': 1, 'keyboard shortcuts': 1,
       'downloads de aplicativos': 1, 'app downloads': 1,
-      'criar novo marcador': 1, 'create new label': 1
+      'criar novo marcador': 1, 'create new label': 1,
+      'licenças de código aberto': 1, 'open-source licenses': 1,
+      'privacidade': 1, 'privacy': 1,
+      'termos': 1, 'terms': 1,
+      'termos de serviço': 1, 'terms of service': 1,
+      'política de privacidade': 1, 'privacy policy': 1,
+      'ativar tema escuro': 1, 'desativar tema escuro': 1,
+      'enable dark theme': 1, 'disable dark theme': 1,
+      'menu principal': 1, 'main menu': 1,
+      'atualizar': 1, 'refresh': 1,
+      'visualização de lista': 1, 'visualização de grade': 1,
+      'list view': 1, 'grid view': 1,
+      'conta do google': 1, 'google account': 1,
+      'google apps': 1, 'google keep': 1,
+      'nova lista': 1, 'new list': 1,
+      'nova nota com imagem': 1, 'new note with image': 1,
+      'nova nota com desenho': 1, 'new note with drawing': 1,
+      'remover marcador': 1, 'remove label': 1
     };
 
     function addLabel(raw) {
-      var name = String(raw || '').replace(/\s+/g, ' ').trim();
+      var name = String(raw || '')
+        .replace(/[\uE000-\uF8FF\u200B-\u200D\uFEFF]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
       if (!name || name.length > 80) return;
       var key = name.toLowerCase();
       if (sysBlocked[key] || seen[key]) return;
@@ -1191,62 +1273,121 @@ const EXTRACT_KEEP_LABELS_JS: &str = r####"(function () {
       out.push(name);
     }
 
-    var labelLinks = document.querySelectorAll('a[href*="#label/"]');
+    function extractTextWithoutIcons(el) {
+      if (!el) return '';
+      var parts = [];
+      var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
+      var node;
+      while ((node = walker.nextNode())) {
+        var val = (node.nodeValue || '').replace(/[\uE000-\uF8FF\u200B-\u200D\uFEFF]/g, '');
+        if (!val || !val.trim()) continue;
+        var skip = false;
+        var p = node.parentElement;
+        while (p && p !== el.parentElement) {
+          var tag = (p.tagName || '').toLowerCase();
+          if (tag === 'svg' || tag === 'style' || tag === 'script') {
+            skip = true;
+            break;
+          }
+          if (p.getAttribute && p.getAttribute('aria-hidden') === 'true') {
+            skip = true;
+            break;
+          }
+          var cls = (typeof p.className === 'string' ? p.className : '').toLowerCase();
+          if (
+            cls.indexOf('material-icons') !== -1 ||
+            cls.indexOf('material-symbols') !== -1 ||
+            cls.indexOf('google-material') !== -1
+          ) {
+            skip = true;
+            break;
+          }
+          try {
+            var ff = (window.getComputedStyle(p).fontFamily || '').toLowerCase();
+            if (ff.indexOf('material') !== -1 || ff.indexOf('glyph') !== -1) {
+              skip = true;
+              break;
+            }
+          } catch (_) {}
+          p = p.parentElement;
+        }
+        if (!skip) parts.push(val.trim());
+      }
+      return parts.join(' ').replace(/\s+/g, ' ').trim();
+    }
+
+    // 1. Links diretos para marcadores (#label/...)
+    var labelLinks = document.querySelectorAll('a[href*="#label/"], [href*="label/"]');
     for (var i = 0; i < labelLinks.length; i++) {
       var a = labelLinks[i];
-      var txt = (a.innerText || a.textContent || '').trim();
+      if (a.closest('[role="dialog"]')) continue;
+      var txt = extractTextWithoutIcons(a);
       if (!txt) {
         var href = a.getAttribute('href') || '';
-        var idx = href.indexOf('#label/');
+        var idx = href.indexOf('label/');
         if (idx !== -1) {
           try {
-            txt = decodeURIComponent(href.slice(idx + 7).split(/[?#]/)[0]);
+            txt = decodeURIComponent(href.slice(idx + 6).split(/[?#]/)[0]);
           } catch (_) {}
         }
       }
       addLabel(txt);
     }
 
-    var nav = document.querySelector('[role="navigation"]');
-    if (nav) {
-      var navItems = nav.querySelectorAll('[role="menuitem"], a[href], div[tabindex="0"]');
+    // 2. Itens na barra lateral ([role="navigation"], nav, aside), inclusive roving tabindex (-1)
+    var navRoots = document.querySelectorAll('[role="navigation"], nav, aside');
+    for (var r = 0; r < navRoots.length; r++) {
+      var nav = navRoots[r];
+      if (nav.closest('[role="dialog"]')) continue;
+      var navItems = nav.querySelectorAll('[role="menuitem"], [role="button"], [role="link"], a, li, div[tabindex], span[tabindex]');
       for (var j = 0; j < navItems.length; j++) {
         var el = navItems[j];
+        if (el.closest('[role="dialog"]')) continue;
+        // Ignora containers que apenas agrupam outros itens clicáveis
+        if (el.querySelector('[role="menuitem"], a, li')) continue;
         var h = (el.getAttribute('href') || '').toLowerCase();
-        if (h && (h.endsWith('#home') || h.endsWith('#reminders') || h.endsWith('#archive') || h.endsWith('#trash'))) {
+        if (h && (h.endsWith('#home') || h.endsWith('#reminders') || h.endsWith('#archive') || h.endsWith('#trash') || h.endsWith('#settings'))) {
           continue;
         }
-        if (el.closest('[role="dialog"]')) continue;
-        var itemTxt = (el.innerText || el.textContent || '').trim();
+        var cleanTxt = extractTextWithoutIcons(el);
         var aria = (el.getAttribute('aria-label') || '').trim();
-        if (itemTxt && itemTxt.indexOf('\n') === -1) {
-          addLabel(itemTxt);
+        if (cleanTxt) {
+          addLabel(cleanTxt);
         } else if (aria && aria.indexOf('\n') === -1 && aria.toLowerCase().indexOf('menu') === -1) {
-          addLabel(aria);
+          addLabel(aria.replace(/^(marcador|label)\s*:\s*/i, ''));
         }
       }
     }
 
-    var removeBtns = document.querySelectorAll('[aria-label*="Remover marcador" i], [aria-label*="Remove label" i]');
-    for (var k = 0; k < removeBtns.length; k++) {
-      var al = removeBtns[k].getAttribute('aria-label') || '';
+    // 3. Chips de marcadores visíveis nos cartões de notas
+    var chipElements = document.querySelectorAll('.Q0hgme-LgbsSe-Bz112c, [aria-label*="Remover marcador" i], [aria-label*="Remove label" i]');
+    for (var k = 0; k < chipElements.length; k++) {
+      var chip = chipElements[k];
+      if (chip.closest('[role="dialog"]')) continue;
+      var al = chip.getAttribute('aria-label') || '';
       var cleaned = al
         .replace(/^remover marcador\s*/i, '')
         .replace(/^remove label\s*/i, '')
         .trim();
-      if (cleaned) addLabel(cleaned);
+      if (cleaned) {
+        addLabel(cleaned);
+      } else {
+        var chipTxt = extractTextWithoutIcons(chip) || extractTextWithoutIcons(chip.parentElement);
+        if (chipTxt) addLabel(chipTxt);
+      }
     }
 
     out.sort(function (a, b) {
       return a.localeCompare(b, undefined, { sensitivity: 'base' });
     });
-    return out;
+    return { ready: true, labels: out };
   } catch (_) {
-    return [];
+    return null;
   }
 })()"####;
 
 fn build_submit_note_js(
+    submit_id: u64,
     title: &str,
     body: &str,
     is_checklist: bool,
@@ -1270,22 +1411,41 @@ fn build_submit_note_js(
     format!(
         r#"(function (cfg) {{
   var attempts = 0;
-  var maxAttempts = 60;
+  var maxAttempts = 45;
   var expandSent = false;
+  var hasLayout = window.innerWidth > 0 && window.innerHeight > 0;
 
-  function isNotHiddenByStyle(el) {{
+  function setStatus(done, ok, stage, detail) {{
+    window.__kdSubmitStatus = {{
+      id: cfg.submitId,
+      done: !!done,
+      ok: !!ok,
+      stage: stage || '',
+      detail: detail || ''
+    }};
+  }}
+
+  setStatus(false, false, 'init', 'Iniciando envio');
+
+  function isElementVisible(el) {{
     if (!el) return false;
     var cur = el;
     while (cur && cur.nodeType === 1) {{
+      if (cur.getAttribute && cur.getAttribute('aria-hidden') === 'true') return false;
       var st = window.getComputedStyle(cur);
-      if (st.display === 'none' || st.visibility === 'hidden') return false;
+      if (st.display === 'none' || st.visibility === 'hidden' || st.opacity === '0') return false;
       cur = cur.parentElement;
+    }}
+    if (hasLayout) {{
+      var rect = el.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return false;
     }}
     return true;
   }}
 
   function dispatchClick(el) {{
     if (!el) return;
+    try {{ el.focus(); }} catch (_) {{}}
     try {{
       el.dispatchEvent(new PointerEvent('pointerdown', {{ bubbles: true, cancelable: true }}));
     }} catch (_) {{}}
@@ -1331,8 +1491,9 @@ fn build_submit_note_js(
         if (nodes[i].closest('[role="dialog"]') && root === document) continue;
         var al = (nodes[i].getAttribute('aria-label') || '').toLowerCase();
         var tt = (nodes[i].getAttribute('data-tooltip') || '').toLowerCase();
+        var tl = (nodes[i].getAttribute('title') || '').toLowerCase();
         var tx = (nodes[i].textContent || '').trim().toLowerCase();
-        if ((al.indexOf(target) !== -1 || tt.indexOf(target) !== -1 || tx === target) && isNotHiddenByStyle(nodes[i])) {{
+        if ((al.indexOf(target) !== -1 || tt.indexOf(target) !== -1 || tl.indexOf(target) !== -1 || tx === target) && isElementVisible(nodes[i])) {{
           return nodes[i];
         }}
       }}
@@ -1342,20 +1503,51 @@ fn build_submit_note_js(
 
   function findCollapsedComposerTrigger() {{
     var selectors = [
-      'div[aria-label="Criar uma nota..."]',
-      'div[aria-label="Take a note..."]',
-      'div[role="textbox"][aria-label*="Criar uma nota" i]',
-      'div[role="textbox"][aria-label*="Take a note" i]'
+      '[aria-label*="Criar uma nota" i]',
+      '[aria-label*="Take a note" i]',
+      '[aria-label*="Adicionar uma nota" i]',
+      '[data-tooltip*="Criar uma nota" i]',
+      '[data-tooltip*="Take a note" i]'
     ];
     for (var s = 0; s < selectors.length; s++) {{
       var list = document.querySelectorAll(selectors[s]);
       for (var i = 0; i < list.length; i++) {{
-        if (!list[i].closest('[role="dialog"]') && isNotHiddenByStyle(list[i])) {{
+        if (!list[i].closest('[role="dialog"]') && !list[i].closest('header') && isElementVisible(list[i])) {{
           return list[i];
         }}
       }}
     }}
+
+    var textEls = document.querySelectorAll('div, span, p');
+    for (var a = 0; a < textEls.length; a++) {{
+      var el = textEls[a];
+      if (el.closest('[role="dialog"]') || el.closest('header') || !isElementVisible(el)) continue;
+      if (el.children.length > 0) continue;
+      var t = (el.textContent || '').replace(/\u2026/g, '...').replace(/\s+/g, ' ').trim().toLowerCase();
+      if (t === 'criar uma nota...' || t === 'criar uma nota' || t === 'take a note...' || t === 'take a note') {{
+        return el.closest('[role="textbox"], [contenteditable="true"], .IZ65Hb-TBnied, .IZ65Hb-n0tgWb') || el.parentElement || el;
+      }}
+    }}
+
+    var newListBtn = findButtonByLabels(document, ['nova lista', 'new list']);
+    if (newListBtn) {{
+      var card = newListBtn.closest('.IZ65Hb-n0tgWb, .IZ65Hb-TBnied') || (newListBtn.parentElement && newListBtn.parentElement.parentElement);
+      if (card) {{
+        var box = card.querySelector('[contenteditable="true"], [role="textbox"]');
+        if (box && isElementVisible(box)) return box;
+        return card;
+      }}
+    }}
     return null;
+  }}
+
+  function looksLikeTitleBox(box) {{
+    var bal = (box.getAttribute('aria-label') || '').toLowerCase();
+    if (bal.indexOf('título') !== -1 || bal.indexOf('titulo') !== -1 || bal.indexOf('title') !== -1) {{
+      return true;
+    }}
+    var parentTxt = (box.parentElement ? box.parentElement.textContent || '' : '').trim().toLowerCase();
+    return parentTxt === 'título' || parentTxt === 'titulo' || parentTxt === 'title';
   }}
 
   function findExpandedComposer() {{
@@ -1368,34 +1560,41 @@ fn build_submit_note_js(
       var tx = (btn.textContent || '').trim().toLowerCase();
       var isClose = tx === 'fechar' || tx === 'close' || tx === 'cerrar' || tx === 'fermer'
         || al === 'fechar' || al === 'close' || tt === 'fechar' || tt === 'close';
-      if (!isClose || !isNotHiddenByStyle(btn)) continue;
+      if (!isClose || !isElementVisible(btn)) continue;
 
       var cur = btn.parentElement;
-      for (var d = 0; d < 8 && cur && cur !== document.body; d++) {{
-        var boxes = cur.querySelectorAll('div[role="textbox"][contenteditable="true"]');
+      for (var d = 0; d < 12 && cur && cur !== document.body; d++) {{
+        var boxes = cur.querySelectorAll('[contenteditable="true"]:not([role="button"]), div[role="textbox"]:not([role="button"])');
         var visibleBoxes = [];
         for (var b = 0; b < boxes.length; b++) {{
-          if (!boxes[b].closest('[role="dialog"]') && isNotHiddenByStyle(boxes[b])) {{
+          if (!boxes[b].closest('[role="dialog"]') && isElementVisible(boxes[b])) {{
             visibleBoxes.push(boxes[b]);
           }}
         }}
-        if (visibleBoxes.length >= 2) {{
+        if (visibleBoxes.length >= 1) {{
           var titleBox = null;
           var bodyBox = null;
-          for (var i = 0; i < visibleBoxes.length; i++) {{
-            var bal = (visibleBoxes[i].getAttribute('aria-label') || '').toLowerCase();
-            if (!titleBox && (bal.indexOf('título') !== -1 || bal.indexOf('titulo') !== -1 || bal.indexOf('title') !== -1)) {{
-              titleBox = visibleBoxes[i];
-            }} else if (!bodyBox) {{
-              bodyBox = visibleBoxes[i];
+          if (visibleBoxes.length === 1) {{
+            if (looksLikeTitleBox(visibleBoxes[0])) {{
+              titleBox = visibleBoxes[0];
+            }} else {{
+              bodyBox = visibleBoxes[0];
             }}
-          }}
-          if (!titleBox) titleBox = visibleBoxes[0];
-          if (!bodyBox || bodyBox === titleBox) {{
-            for (var j = 0; j < visibleBoxes.length; j++) {{
-              if (visibleBoxes[j] !== titleBox) {{
-                bodyBox = visibleBoxes[j];
-                break;
+          }} else {{
+            for (var i = 0; i < visibleBoxes.length; i++) {{
+              if (!titleBox && looksLikeTitleBox(visibleBoxes[i])) {{
+                titleBox = visibleBoxes[i];
+              }} else if (!bodyBox) {{
+                bodyBox = visibleBoxes[i];
+              }}
+            }}
+            if (!titleBox) titleBox = visibleBoxes[0];
+            if (!bodyBox || bodyBox === titleBox) {{
+              for (var j = 0; j < visibleBoxes.length; j++) {{
+                if (visibleBoxes[j] !== titleBox) {{
+                  bodyBox = visibleBoxes[j];
+                  break;
+                }}
               }}
             }}
           }}
@@ -1408,10 +1607,15 @@ fn build_submit_note_js(
   }}
 
   function insertIntoEditable(el, value) {{
-    if (!el || !value) return;
-    el.focus();
+    if (!el || !value) return true;
+    try {{ el.focus(); }} catch (_) {{}}
     var normalizedExpected = String(value).replace(/\r/g, '');
     var probe = normalizedExpected.slice(0, Math.min(20, normalizedExpected.length));
+
+    function containsProbe() {{
+      var got = (el.textContent || el.innerText || '').replace(/\r/g, '');
+      return !probe || got.indexOf(probe) !== -1;
+    }}
 
     try {{
       var sel = window.getSelection();
@@ -1422,10 +1626,10 @@ fn build_submit_note_js(
       if (typeof document.execCommand === 'function') {{
         document.execCommand('selectAll', false, null);
         var ok = document.execCommand('insertText', false, value);
-        var got = (el.innerText || el.textContent || '').replace(/\r/g, '');
-        if (ok && (!probe || got.indexOf(probe) !== -1)) {{
+        if (ok && containsProbe()) {{
+          el.dispatchEvent(new Event('input', {{ bubbles: true }}));
           el.dispatchEvent(new Event('change', {{ bubbles: true }}));
-          return;
+          return true;
         }}
       }}
     }} catch (_) {{}}
@@ -1438,10 +1642,10 @@ fn build_submit_note_js(
         cancelable: true,
         clipboardData: dt
       }}));
-      var gotPaste = (el.innerText || el.textContent || '').replace(/\r/g, '');
-      if (!probe || gotPaste.indexOf(probe) !== -1) {{
+      if (containsProbe()) {{
+        el.dispatchEvent(new Event('input', {{ bubbles: true }}));
         el.dispatchEvent(new Event('change', {{ bubbles: true }}));
-        return;
+        return true;
       }}
     }} catch (_) {{}}
 
@@ -1474,17 +1678,21 @@ fn build_submit_note_js(
     }} catch (_) {{
       el.dispatchEvent(new Event('input', {{ bubbles: true }}));
     }}
-    el.dispatchEvent(new KeyboardEvent('keydown', {{ key: ' ', code: 'Space', bubbles: true }}));
-    el.dispatchEvent(new KeyboardEvent('keyup', {{ key: ' ', code: 'Space', bubbles: true }}));
+    try {{
+      el.dispatchEvent(new CompositionEvent('compositionend', {{ bubbles: true, data: value }}));
+    }} catch (_) {{}}
+    el.dispatchEvent(new KeyboardEvent('keydown', {{ key: 'a', code: 'KeyA', bubbles: true }}));
+    el.dispatchEvent(new KeyboardEvent('keyup', {{ key: 'a', code: 'KeyA', bubbles: true }}));
     el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+    return containsProbe();
   }}
 
   function findCreateLabelButton(tagName) {{
     var target = tagName.toLowerCase();
-    var candidates = document.querySelectorAll('[role="menuitem"], [role="button"], div[tabindex="0"], li');
+    var candidates = document.querySelectorAll('[role="menuitem"], [role="button"], div[tabindex], li');
     for (var i = 0; i < candidates.length; i++) {{
       var el = candidates[i];
-      if (!isNotHiddenByStyle(el)) continue;
+      if (!isElementVisible(el)) continue;
       var txt = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
       if (!txt) continue;
       if ((txt.indexOf('criar ') === 0 || txt.indexOf('create ') === 0) && txt.indexOf(target) !== -1) {{
@@ -1497,6 +1705,7 @@ fn build_submit_note_js(
   function applyColorAndPinAndClose(comp) {{
     var root = comp.root;
     var refEl = comp.bodyBox || comp.titleBox;
+    setStatus(false, false, 'styling', 'Aplicando opções e fechando nota');
 
     if (cfg.pinned) {{
       var pinBtn = findButtonByLabels(root, ['fixar nota', 'pin note']);
@@ -1506,17 +1715,42 @@ fn build_submit_note_js(
     }}
 
     function finishClose() {{
+      setStatus(false, false, 'closing', 'Fechando editor para confirmar salvamento');
       var closeBtn = findButtonByLabels(root, ['fechar', 'close', 'cerrar', 'fermer']) || comp.closeBtn;
-      if (closeBtn && isNotHiddenByStyle(closeBtn)) {{
+      if (closeBtn && isElementVisible(closeBtn)) {{
         dispatchClick(closeBtn);
         setTimeout(function () {{
-          if (findExpandedComposer()) {{
-            dispatchClick(closeBtn);
+          if (!findExpandedComposer()) {{
+            setStatus(true, true, 'saved', 'Nota salva no Google Keep');
+            return;
           }}
-        }}, 260);
-      }} else if (refEl) {{
-        refEl.blur();
-        dispatchClick(document.body);
+          dispatchClick(closeBtn);
+          if (refEl) {{
+            try {{ refEl.blur(); }} catch (_) {{}}
+          }}
+          setTimeout(function () {{
+            if (!findExpandedComposer()) {{
+              setStatus(true, true, 'saved', 'Nota salva no Google Keep');
+            }} else {{
+              document.dispatchEvent(new KeyboardEvent('keydown', {{
+                key: 'Escape',
+                code: 'Escape',
+                keyCode: 27,
+                which: 27,
+                bubbles: true
+              }}));
+              setTimeout(function () {{
+                if (!findExpandedComposer()) {{
+                  setStatus(true, true, 'saved', 'Nota salva no Google Keep');
+                }} else {{
+                  setStatus(true, false, 'closing', 'Editor do Keep permaneceu aberto após clicar em Fechar');
+                }}
+              }}, 350);
+            }}
+          }}, 320);
+        }}, 300);
+      }} else {{
+        setStatus(true, false, 'closing', 'Botão Fechar do editor não encontrado');
       }}
     }}
 
@@ -1526,7 +1760,7 @@ fn build_submit_note_js(
         if (moreBtn) {{
           dispatchClick(moreBtn);
           setTimeout(function () {{
-            var addLabelItem = findButtonByLabels(document, ['adicionar marcador', 'alterar marcadores', 'add label', 'change labels']);
+            var addLabelItem = findButtonByLabels(document, ['adicionar marcador', 'alterar marcadores', 'add label', 'change labels', 'marcadores', 'labels']);
             if (addLabelItem) {{
               dispatchClick(addLabelItem);
               setTimeout(function () {{
@@ -1543,9 +1777,9 @@ fn build_submit_note_js(
                     return;
                   }}
                   var searchInput = document.querySelector(
-                    'input[aria-label*="marcador" i], input[aria-label*="label" i], input[placeholder*="marcador" i], input[placeholder*="label" i]'
+                    'input[aria-label*="marcador" i], input[aria-label*="label" i], input[placeholder*="marcador" i], input[placeholder*="label" i], input[placeholder*="digite" i], input[maxlength="50"]'
                   );
-                  if (searchInput && isNotHiddenByStyle(searchInput)) {{
+                  if (searchInput && isElementVisible(searchInput)) {{
                     searchInput.focus();
                     setNativeInputValue(searchInput, t);
                     setTimeout(function () {{
@@ -1553,7 +1787,7 @@ fn build_submit_note_js(
                       var clicked = false;
                       var exactTarget = t.toLowerCase();
                       for (var k = 0; k < cbs.length; k++) {{
-                        if (!isNotHiddenByStyle(cbs[k])) continue;
+                        if (!isElementVisible(cbs[k])) continue;
                         var labelTxt = (cbs[k].innerText || cbs[k].textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
                         if (labelTxt === exactTarget) {{
                           if (cbs[k].getAttribute('aria-checked') !== 'true') {{
@@ -1579,11 +1813,11 @@ fn build_submit_note_js(
                   }}
                 }}
                 nextTag();
-              }}, 200);
+              }}, 220);
               return;
             }}
             setTimeout(finishClose, 180);
-          }}, 200);
+          }}, 220);
           return;
         }}
       }}
@@ -1606,6 +1840,7 @@ fn build_submit_note_js(
   }}
 
   function populateChecklistItems(comp) {{
+    setStatus(false, false, 'populating', 'Preenchendo itens da lista');
     var titleBox = comp.titleBox;
     var cleanTitle = (cfg.title || '').trim();
     if (cleanTitle && titleBox) {{
@@ -1623,11 +1858,11 @@ fn build_submit_note_js(
       }}
 
       var item = cfg.items[idx];
-      var inputs = comp.root.querySelectorAll('div[role="textbox"][contenteditable="true"]');
+      var inputs = comp.root.querySelectorAll('[contenteditable="true"]:not([role="button"]), div[role="textbox"]:not([role="button"])');
       var targetInput = null;
       var lastInput = null;
       for (var i = 0; i < inputs.length; i++) {{
-        if (!inputs[i].closest('[role="dialog"]') && inputs[i] !== titleBox && isNotHiddenByStyle(inputs[i])) {{
+        if (!inputs[i].closest('[role="dialog"]') && inputs[i] !== titleBox && isElementVisible(inputs[i])) {{
           lastInput = inputs[i];
           if (!(inputs[i].textContent || '').trim()) {{
             targetInput = inputs[i];
@@ -1642,7 +1877,7 @@ fn build_submit_note_js(
           lastInput.dispatchEvent(new KeyboardEvent('keydown', {{ key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }}));
           lastInput.dispatchEvent(new KeyboardEvent('keyup', {{ key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }}));
         }}
-        setTimeout(function () {{ insertNextItem((retryCount || 0) + 1); }}, 110);
+        setTimeout(function () {{ insertNextItem((retryCount || 0) + 1); }}, 120);
         return;
       }}
 
@@ -1659,7 +1894,7 @@ fn build_submit_note_js(
         targetInput.dispatchEvent(new KeyboardEvent('keydown', {{ key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }}));
         targetInput.dispatchEvent(new KeyboardEvent('keyup', {{ key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }}));
       }}
-      setTimeout(function () {{ insertNextItem(0); }}, 100);
+      setTimeout(function () {{ insertNextItem(0); }}, 110);
     }}
 
     setTimeout(function () {{ insertNextItem(0); }}, 140);
@@ -1667,15 +1902,31 @@ fn build_submit_note_js(
 
   function step() {{
     attempts++;
-    if (attempts > maxAttempts) return;
+    if (attempts > maxAttempts) {{
+      var hadTrigger = !!findCollapsedComposerTrigger();
+      var hadExpanded = !!findExpandedComposer();
+      setStatus(
+        true,
+        false,
+        'expanding',
+        'Tempo esgotado no Keep (trigger: ' + hadTrigger + ', aberto: ' + hadExpanded + ')'
+      );
+      return;
+    }}
+
+    if (window.location.hostname !== 'keep.google.com') {{
+      setStatus(true, false, 'auth', 'Keep não está carregado (faça login primeiro)');
+      return;
+    }}
 
     if (document.readyState !== 'complete') {{
-      setTimeout(step, 200);
+      setStatus(false, false, 'waiting_ready', 'Aguardando Keep carregar');
+      setTimeout(step, 220);
       return;
     }}
 
     var openDialog = document.querySelector('[role="dialog"]');
-    if (openDialog) {{
+    if (openDialog && isElementVisible(openDialog)) {{
       document.dispatchEvent(
         new KeyboardEvent('keydown', {{
           key: 'Escape',
@@ -1709,8 +1960,8 @@ fn build_submit_note_js(
               if (showCb) dispatchClick(showCb);
               setTimeout(function () {{
                 populateChecklistItems(findExpandedComposer() || comp);
-              }}, 180);
-            }}, 160);
+              }}, 200);
+            }}, 180);
             return;
           }}
         }}
@@ -1718,18 +1969,31 @@ fn build_submit_note_js(
         return;
       }}
 
+      setStatus(false, false, 'populating', 'Inserindo título e conteúdo');
       var cleanTitle = (cfg.title || '').trim();
       var cleanBody = cfg.isChecklist && cfg.items && cfg.items.length
         ? cfg.items.map(function (i) {{ return i.text; }}).join('\n')
         : (cfg.body || '').trimEnd();
 
+      var okTitle = true;
+      var okBody = true;
       if (cleanTitle && comp.titleBox) {{
-        insertIntoEditable(comp.titleBox, cleanTitle);
+        okTitle = insertIntoEditable(comp.titleBox, cleanTitle);
       }}
       if (cleanBody && comp.bodyBox) {{
-        insertIntoEditable(comp.bodyBox, cleanBody);
+        okBody = insertIntoEditable(comp.bodyBox, cleanBody);
       }} else if (cleanTitle && !comp.titleBox && comp.bodyBox) {{
-        insertIntoEditable(comp.bodyBox, cleanTitle);
+        okBody = insertIntoEditable(comp.bodyBox, cleanTitle);
+      }} else if (cleanBody && !comp.bodyBox && comp.titleBox) {{
+        okBody = insertIntoEditable(comp.titleBox, cleanBody);
+      }} else if (!comp.bodyBox && !comp.titleBox) {{
+        setStatus(true, false, 'populating', 'Campos de edição do Keep não encontrados');
+        return;
+      }}
+
+      if (!okTitle && !okBody) {{
+        setStatus(true, false, 'populating', 'O editor do Keep não aceitou o texto');
+        return;
       }}
 
       setTimeout(function () {{
@@ -1738,11 +2002,12 @@ fn build_submit_note_js(
       return;
     }}
 
+    setStatus(false, false, 'expanding', 'Abrindo campo "Criar uma nota..."');
     if (cfg.isChecklist && cfg.items && cfg.items.length > 0) {{
       var newListBtn = findButtonByLabels(document, ['nova lista', 'new list']);
       if (newListBtn) {{
         dispatchClick(newListBtn);
-        setTimeout(step, 220);
+        setTimeout(step, 240);
         return;
       }}
     }}
@@ -1750,9 +2015,12 @@ fn build_submit_note_js(
     var trigger = findCollapsedComposerTrigger();
     if (trigger) {{
       dispatchClick(trigger);
-      trigger.focus();
+      var innerBox = trigger.querySelector && trigger.querySelector('[contenteditable="true"], [role="textbox"]');
+      if (innerBox && innerBox !== trigger) {{
+        dispatchClick(innerBox);
+      }}
       if (expandSent) {{
-        document.body.dispatchEvent(new KeyboardEvent('keydown', {{
+        document.dispatchEvent(new KeyboardEvent('keydown', {{
           key: 'c',
           code: 'KeyC',
           keyCode: 67,
@@ -1762,7 +2030,7 @@ fn build_submit_note_js(
       }}
       expandSent = true;
     }} else if (!expandSent) {{
-      document.body.dispatchEvent(new KeyboardEvent('keydown', {{
+      document.dispatchEvent(new KeyboardEvent('keydown', {{
         key: 'c',
         code: 'KeyC',
         keyCode: 67,
@@ -1771,11 +2039,12 @@ fn build_submit_note_js(
       }}));
       expandSent = true;
     }}
-    setTimeout(step, 220);
+    setTimeout(step, 240);
   }}
 
   step();
 }})({{
+  submitId: {submit_id},
   title: {title_json},
   body: {body_json},
   isChecklist: {is_checklist},
@@ -1787,13 +2056,16 @@ fn build_submit_note_js(
     )
 }
 
-fn build_main_ui_js(theme_preset: &str, compact_mode: bool, filter_bar: bool) -> String {
+fn build_main_ui_js(theme_preset: &str, compact_mode: bool) -> String {
     let theme_json =
         serde_json::to_string(theme_preset).unwrap_or_else(|_| "\"default\"".to_string());
     format!(
-        r#"(function (themeName, compactMode, showFilterBar) {{
+        r#"(function (themeName, compactMode) {{
   try {{
     if (window.location.hostname !== 'keep.google.com') return;
+
+    var oldBar = document.getElementById('kd-filter-bar');
+    if (oldBar) oldBar.remove();
 
     var themeVars = '';
     if (themeName === 'amoled') {{
@@ -1822,18 +2094,7 @@ fn build_main_ui_js(theme_preset: &str, compact_mode: bool, filter_bar: bool) ->
       + '::-webkit-scrollbar-thumb:hover {{ background: rgba(154,160,166,0.55); border: 2px solid transparent; background-clip: content-box; }}'
       + '* {{ scrollbar-width: thin; scrollbar-color: rgba(154,160,166,0.35) transparent; }}'
       + themeVars
-      + compactCss
-      + '.kd-note-dimmed {{ opacity: 0.14 !important; filter: saturate(0.2); transition: opacity 0.15s ease; }}'
-      + '.kd-note-match {{ box-shadow: 0 0 0 2px rgba(251,188,4,0.75) !important; transition: box-shadow 0.15s ease; }}'
-      + '.kd-note-hidden {{ display: none !important; }}'
-      + '#kd-filter-bar {{ position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%); z-index: 900; display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 999px; background: rgba(32,33,36,0.92); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.14); box-shadow: 0 6px 24px rgba(0,0,0,0.45); font-family: "Segoe UI", system-ui, sans-serif; color: #e8eaed; font-size: 12px; max-width: calc(100vw - 24px); flex-wrap: wrap; }}'
-      + '#kd-filter-bar.collapsed {{ padding: 5px 12px; }}'
-      + '#kd-filter-bar .kd-pill {{ border: 1px solid rgba(255,255,255,0.14); background: transparent; color: #bdc1c6; border-radius: 999px; padding: 3px 9px; font-size: 11px; cursor: pointer; white-space: nowrap; }}'
-      + '#kd-filter-bar .kd-pill:hover {{ background: rgba(255,255,255,0.08); color: #fff; }}'
-      + '#kd-filter-bar .kd-pill.active {{ background: rgba(251,188,4,0.2); color: #fbbc04; border-color: rgba(251,188,4,0.55); font-weight: 600; }}'
-      + '#kd-filter-bar .kd-search {{ border: 1px solid rgba(255,255,255,0.14); background: rgba(255,255,255,0.06); color: #e8eaed; border-radius: 999px; padding: 3px 10px; font-size: 11px; outline: none; width: 145px; }}'
-      + '#kd-filter-bar .kd-search:focus {{ border-color: rgba(251,188,4,0.65); }}'
-      + '#kd-filter-bar .kd-count {{ font-size: 11px; color: #9aa0a6; padding: 0 4px; white-space: nowrap; }}';
+      + compactCss;
 
     var styleEl = document.getElementById('kd-theme-style');
     if (!styleEl) {{
@@ -1842,195 +2103,8 @@ fn build_main_ui_js(theme_preset: &str, compact_mode: bool, filter_bar: bool) ->
       (document.head || document.documentElement).appendChild(styleEl);
     }}
     styleEl.textContent = styleText;
-
-    function clearAllNoteClasses() {{
-      var notes = document.querySelectorAll('.kd-note-dimmed, .kd-note-match, .kd-note-hidden');
-      for (var i = 0; i < notes.length; i++) {{
-        notes[i].classList.remove('kd-note-dimmed', 'kd-note-match', 'kd-note-hidden');
-      }}
-    }}
-
-    var existingBar = document.getElementById('kd-filter-bar');
-    if (!showFilterBar) {{
-      if (existingBar) existingBar.remove();
-      clearAllNoteClasses();
-      return;
-    }}
-
-    if (existingBar) return;
-    if (!document.body) return;
-
-    var bar = document.createElement('div');
-    bar.id = 'kd-filter-bar';
-
-    var filterState = {{ mode: 'all', query: '', isolate: false, collapsed: false }};
-
-    function getNoteCards() {{
-      var cards = document.querySelectorAll('.IZ65Hb-n0tgWb');
-      var out = [];
-      for (var i = 0; i < cards.length; i++) {{
-        if (!cards[i].closest('[role="dialog"]') && !cards[i].closest('header')) {{
-          out.push(cards[i]);
-        }}
-      }}
-      return out;
-    }}
-
-    function cardMatches(card) {{
-      var q = filterState.query.trim().toLowerCase();
-      var text = (card.innerText || card.textContent || '').toLowerCase();
-      if (q) {{
-        var terms = q.split(/\s+/);
-        for (var i = 0; i < terms.length; i++) {{
-          var term = terms[i].replace(/^#/, '');
-          if (term && text.indexOf(term) === -1) return false;
-        }}
-      }}
-      if (filterState.mode === 'pinned') {{
-        var pinBtn = card.querySelector('[aria-label*="Desafixar" i], [aria-label*="Unpin" i]');
-        return !!pinBtn;
-      }}
-      if (filterState.mode === 'lists') {{
-        return !!card.querySelector('[role="checkbox"]');
-      }}
-      if (filterState.mode === 'unchecked') {{
-        return !!card.querySelector('[role="checkbox"][aria-checked="false"]');
-      }}
-      if (filterState.mode === 'untagged') {{
-        var labels = card.querySelectorAll('[aria-label*="Remover marcador" i], [aria-label*="Remove label" i], .Q0hgme-LgbsSe-Bz112c');
-        return labels.length === 0;
-      }}
-      return true;
-    }}
-
-    function applyFilter() {{
-      var cards = getNoteCards();
-      var isActive = filterState.mode !== 'all' || filterState.query.trim().length > 0;
-      var matched = 0;
-      for (var i = 0; i < cards.length; i++) {{
-        var c = cards[i];
-        c.classList.remove('kd-note-dimmed', 'kd-note-match', 'kd-note-hidden');
-        if (!isActive) continue;
-        if (cardMatches(c)) {{
-          matched++;
-          c.classList.add('kd-note-match');
-        }} else {{
-          c.classList.add(filterState.isolate ? 'kd-note-hidden' : 'kd-note-dimmed');
-        }}
-      }}
-      var countEl = bar.querySelector('.kd-count');
-      if (countEl) {{
-        countEl.textContent = isActive ? (matched + '/' + cards.length) : (cards.length + ' notas');
-      }}
-    }}
-
-    function renderBar() {{
-      while (bar.firstChild) {{
-        bar.removeChild(bar.firstChild);
-      }}
-      bar.classList.toggle('collapsed', filterState.collapsed);
-
-      if (filterState.collapsed) {{
-        var expandBtn = document.createElement('button');
-        expandBtn.className = 'kd-pill active';
-        expandBtn.textContent = 'Filtros \u25b2';
-        expandBtn.addEventListener('click', function () {{
-          filterState.collapsed = false;
-          renderBar();
-          applyFilter();
-        }});
-        bar.appendChild(expandBtn);
-        return;
-      }}
-
-      var modes = [
-        {{ id: 'all', label: 'Todas' }},
-        {{ id: 'pinned', label: 'Fixadas' }},
-        {{ id: 'lists', label: 'Listas' }},
-        {{ id: 'unchecked', label: 'Pendentes' }}
-      ];
-      modes.forEach(function (m) {{
-        var btn = document.createElement('button');
-        btn.className = 'kd-pill' + (filterState.mode === m.id ? ' active' : '');
-        btn.textContent = m.label;
-        btn.addEventListener('click', function () {{
-          filterState.mode = m.id;
-          renderBar();
-          applyFilter();
-        }});
-        bar.appendChild(btn);
-      }});
-
-      var search = document.createElement('input');
-      search.className = 'kd-search';
-      search.type = 'text';
-      search.placeholder = 'Filtrar texto / #tag...';
-      search.value = filterState.query;
-      search.addEventListener('input', function () {{
-        filterState.query = search.value;
-        applyFilter();
-      }});
-      bar.appendChild(search);
-
-      var isoBtn = document.createElement('button');
-      isoBtn.className = 'kd-pill' + (filterState.isolate ? ' active' : '');
-      isoBtn.title = 'Ocultar notas não correspondentes';
-      isoBtn.textContent = 'Isolar';
-      isoBtn.addEventListener('click', function () {{
-        filterState.isolate = !filterState.isolate;
-        isoBtn.classList.toggle('active', filterState.isolate);
-        applyFilter();
-      }});
-      bar.appendChild(isoBtn);
-
-      var count = document.createElement('span');
-      count.className = 'kd-count';
-      bar.appendChild(count);
-
-      if (filterState.mode !== 'all' || filterState.query) {{
-        var clr = document.createElement('button');
-        clr.className = 'kd-pill';
-        clr.textContent = '\u00d7';
-        clr.title = 'Limpar filtros';
-        clr.addEventListener('click', function () {{
-          filterState.mode = 'all';
-          filterState.query = '';
-          renderBar();
-          applyFilter();
-        }});
-        bar.appendChild(clr);
-      }}
-
-      var minBtn = document.createElement('button');
-      minBtn.className = 'kd-pill';
-      minBtn.textContent = '\u25bc';
-      minBtn.title = 'Recolher barra';
-      minBtn.addEventListener('click', function () {{
-        filterState.collapsed = true;
-        renderBar();
-      }});
-      bar.appendChild(minBtn);
-
-      applyFilter();
-    }}
-
-    document.body.appendChild(bar);
-    renderBar();
-
-    if (!bar.dataset.kdObserved) {{
-      bar.dataset.kdObserved = '1';
-      var timer = null;
-      var obs = new MutationObserver(function (mutations) {{
-        for (var i = 0; i < mutations.length; i++) {{
-          if (bar.contains(mutations[i].target)) return;
-        }}
-        clearTimeout(timer);
-        timer = setTimeout(applyFilter, 300);
-      }});
-      obs.observe(document.body, {{ childList: true, subtree: true }});
-    }}
   }} catch (_) {{}}
-}})({theme_json}, {compact_mode}, {filter_bar});"#
+}})({theme_json}, {compact_mode});"#
     )
 }
 
@@ -2047,7 +2121,6 @@ struct AppConfig {
     sw_migrated_v2: bool,
     theme_preset: String,
     compact_mode: bool,
-    filter_bar: bool,
 }
 
 impl Default for AppConfig {
@@ -2063,7 +2136,6 @@ impl Default for AppConfig {
             sw_migrated_v2: false,
             theme_preset: "default".to_string(),
             compact_mode: false,
-            filter_bar: true,
         }
     }
 }
@@ -2154,16 +2226,16 @@ where
 }
 
 fn apply_main_ui_enhancements(app: &AppHandle) {
-    let (theme, compact, filter_bar) = app
+    let (theme, compact) = app
         .state::<AppState>()
         .config
         .lock()
-        .map(|cfg| (cfg.theme_preset.clone(), cfg.compact_mode, cfg.filter_bar))
-        .unwrap_or_else(|_| ("default".to_string(), false, true));
+        .map(|cfg| (cfg.theme_preset.clone(), cfg.compact_mode))
+        .unwrap_or_else(|_| ("default".to_string(), false));
 
     if let Some(win) = app.get_window("main") {
         with_keep_webview(&win, move |wv| {
-            let script = build_main_ui_js(&theme, compact, filter_bar);
+            let script = build_main_ui_js(&theme, compact);
             let _ = wv.evaluate_script(&script);
         });
     }
@@ -2229,6 +2301,22 @@ fn hide_quick_note(app: &AppHandle, clear: bool) {
     }
 }
 
+fn show_quick_note_error(app: &AppHandle, message: &str) {
+    if let Some(qn_win) = app.get_window("quick-note") {
+        let msg_json =
+            serde_json::to_string(message).unwrap_or_else(|_| "\"Erro ao salvar\"".to_string());
+        let _ = qn_win.show();
+        let _ = qn_win.unminimize();
+        let _ = qn_win.set_focus();
+        with_quick_note_webview(&qn_win, move |wv| {
+            let _ = wv.focus();
+            let js =
+                format!("window.onQuickNoteSaveError && window.onQuickNoteSaveError({msg_json});");
+            let _ = wv.evaluate_script(&js);
+        });
+    }
+}
+
 fn push_labels_to_quick_note(app: &AppHandle, labels: &[String]) {
     if let Some(qn_win) = app.get_window("quick-note") {
         let json = serde_json::to_string(labels).unwrap_or_else(|_| "[]".to_string());
@@ -2237,6 +2325,24 @@ fn push_labels_to_quick_note(app: &AppHandle, labels: &[String]) {
             let _ = wv.evaluate_script(&js);
         });
     }
+}
+
+#[derive(Deserialize)]
+struct KeepLabelsResult {
+    ready: bool,
+    labels: Vec<String>,
+}
+
+fn parse_eval_json<T: for<'de> Deserialize<'de>>(raw: &str) -> Option<T> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || trimmed == "null" {
+        return None;
+    }
+    serde_json::from_str::<T>(trimmed).ok().or_else(|| {
+        serde_json::from_str::<String>(trimmed)
+            .ok()
+            .and_then(|inner| serde_json::from_str::<T>(&inner).ok())
+    })
 }
 
 fn sync_keep_labels(app: &AppHandle) {
@@ -2250,23 +2356,24 @@ fn sync_keep_labels(app: &AppHandle) {
             }
             let cb_app = app_handle.clone();
             let _ = wv.evaluate_script_with_callback(EXTRACT_KEEP_LABELS_JS, move |raw| {
-                if raw.trim() == "null" || raw.trim().is_empty() {
-                    return;
-                }
-                let parsed_opt: Option<Vec<String>> =
-                    serde_json::from_str::<Vec<String>>(&raw).ok().or_else(|| {
-                        serde_json::from_str::<String>(&raw)
-                            .ok()
-                            .and_then(|inner| serde_json::from_str::<Vec<String>>(&inner).ok())
-                    });
-                let Some(parsed) = parsed_opt else {
+                let parsed = if let Some(res) = parse_eval_json::<KeepLabelsResult>(&raw) {
+                    if !res.ready {
+                        return;
+                    }
+                    res.labels
+                } else if let Some(list) = parse_eval_json::<Vec<String>>(&raw) {
+                    list
+                } else {
                     return;
                 };
                 let target_app = cb_app.clone();
                 let _ = cb_app.run_on_main_thread(move || {
                     let state = target_app.state::<AppState>();
                     let latest = if let Ok(mut cached) = state.cached_labels.lock() {
-                        *cached = parsed;
+                        // Preserva labels recém-criados se o Keep ainda estiver terminando de renderizar
+                        if !parsed.is_empty() || cached.is_empty() {
+                            *cached = parsed;
+                        }
                         cached.clone()
                     } else {
                         parsed
@@ -2306,6 +2413,17 @@ fn trigger_quick_note(app: &AppHandle) {
     }
 }
 
+#[derive(Deserialize)]
+struct SubmitStatusResult {
+    id: u64,
+    done: bool,
+    ok: bool,
+    #[serde(default)]
+    stage: String,
+    #[serde(default)]
+    detail: String,
+}
+
 fn submit_quick_note_to_keep(
     app: &AppHandle,
     title: String,
@@ -2336,18 +2454,27 @@ fn submit_quick_note_to_keep(
             cached.sort_by_key(|a| a.to_lowercase());
         };
     }
-    hide_quick_note(app, true);
+
+    let submit_id = NEXT_SUBMIT_ID.fetch_add(1, Ordering::Relaxed);
+    hide_quick_note(app, false);
+
     if let Some(main_win) = app.get_window("main") {
         let main_win_clone = main_win.clone();
-        let refresh_app = app.clone();
+        let app_for_auth = app.clone();
+        let poll_app = app.clone();
         with_keep_webview(&main_win, move |wv| {
             if let Ok(url) = wv.url() {
-                if url.contains("accounts.google.com") {
+                if url.contains("accounts.google.com") || !url.contains("keep.google.com") {
                     show_and_focus_window(&main_win_clone);
+                    show_quick_note_error(
+                        &app_for_auth,
+                        "Faça login no Google Keep e tente novamente",
+                    );
                     return;
                 }
             }
             let script = build_submit_note_js(
+                submit_id,
                 &title,
                 &body,
                 is_checklist,
@@ -2357,14 +2484,73 @@ fn submit_quick_note_to_keep(
                 &tags,
             );
             let _ = wv.evaluate_script(&script);
+
             std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_millis(2200));
-                let app_inner = refresh_app.clone();
-                let _ = refresh_app.run_on_main_thread(move || {
-                    sync_keep_labels(&app_inner);
+                for _ in 0..40 {
+                    std::thread::sleep(std::time::Duration::from_millis(300));
+                    let (tx, rx) = std::sync::mpsc::channel::<Option<SubmitStatusResult>>();
+                    let check_app = poll_app.clone();
+                    let sent = poll_app.run_on_main_thread(move || {
+                        if let Some(win) = check_app.get_window("main") {
+                            KEEP_WEBVIEW.with(|cell| {
+                                if let Some(wv) = cell.borrow().as_ref() {
+                                    let _ = wv.evaluate_script_with_callback(
+                                        "window.__kdSubmitStatus || null",
+                                        move |raw| {
+                                            let _ = tx
+                                                .send(parse_eval_json::<SubmitStatusResult>(&raw));
+                                        },
+                                    );
+                                } else {
+                                    let _ = tx.send(None);
+                                }
+                            });
+                            let _ = &win;
+                        } else {
+                            let _ = tx.send(None);
+                        }
+                    });
+                    if sent.is_err() {
+                        break;
+                    }
+                    if let Ok(Some(status)) = rx.recv_timeout(std::time::Duration::from_millis(800))
+                    {
+                        if status.id == submit_id && status.done {
+                            let finish_app = poll_app.clone();
+                            let _ = poll_app.run_on_main_thread(move || {
+                                if status.ok {
+                                    if let Some(qn_win) = finish_app.get_window("quick-note") {
+                                        with_quick_note_webview(&qn_win, |wv| {
+                                            let _ = wv.evaluate_script(
+                                                "window.resetQuickNoteIfSaving && window.resetQuickNoteIfSaving();",
+                                            );
+                                        });
+                                    }
+                                    sync_keep_labels(&finish_app);
+                                } else {
+                                    let msg = if status.detail.is_empty() {
+                                        format!("Erro ao salvar no Keep ({})", status.stage)
+                                    } else {
+                                        format!("Erro ({}): {}", status.stage, status.detail)
+                                    };
+                                    show_quick_note_error(&finish_app, &msg);
+                                }
+                            });
+                            return;
+                        }
+                    }
+                }
+                let timeout_app = poll_app.clone();
+                let _ = poll_app.run_on_main_thread(move || {
+                    show_quick_note_error(
+                        &timeout_app,
+                        "Tempo esgotado ao salvar — verifique se o Keep está logado",
+                    );
                 });
             });
         });
+    } else {
+        show_quick_note_error(app, "Janela principal do Keep indisponível");
     }
 }
 
@@ -2797,7 +2983,6 @@ fn main() {
             let initial_autostart = initial_cfg.autostart;
             let initial_theme = initial_cfg.theme_preset.clone();
             let initial_compact = initial_cfg.compact_mode;
-            let initial_filter_bar = initial_cfg.filter_bar;
             let saved_size = initial_cfg.width.zip(initial_cfg.height);
             let saved_pos = initial_cfg.x.zip(initial_cfg.y);
 
@@ -2885,33 +3070,28 @@ fn main() {
                     .with_on_page_load_handler(move |event, _| {
                         if matches!(event, PageLoadEvent::Finished) {
                             let state = page_load_app.state::<AppState>();
-                            let (zoom, theme, compact, filter_bar) = state
+                            let (zoom, theme, compact) = state
                                 .config
                                 .lock()
-                                .map(|cfg| {
-                                    (
-                                        cfg.zoom,
-                                        cfg.theme_preset.clone(),
-                                        cfg.compact_mode,
-                                        cfg.filter_bar,
-                                    )
-                                })
-                                .unwrap_or_else(|_| (1.0, "default".to_string(), false, true));
+                                .map(|cfg| (cfg.zoom, cfg.theme_preset.clone(), cfg.compact_mode))
+                                .unwrap_or_else(|_| (1.0, "default".to_string(), false));
                             if let Some(win) = page_load_app.get_window("main") {
                                 with_keep_webview(&win, move |wv| {
                                     let _ = wv.zoom(zoom);
-                                    let script = build_main_ui_js(&theme, compact, filter_bar);
+                                    let script = build_main_ui_js(&theme, compact);
                                     let _ = wv.evaluate_script(&script);
                                 });
                             }
                             sync_keep_labels(&page_load_app);
                             let delayed_app = page_load_app.clone();
                             std::thread::spawn(move || {
-                                std::thread::sleep(std::time::Duration::from_millis(1800));
-                                let app_inner = delayed_app.clone();
-                                let _ = delayed_app.run_on_main_thread(move || {
-                                    sync_keep_labels(&app_inner);
-                                });
+                                for delay_ms in [1500_u64, 2500_u64] {
+                                    std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+                                    let app_inner = delayed_app.clone();
+                                    let _ = delayed_app.run_on_main_thread(move || {
+                                        sync_keep_labels(&app_inner);
+                                    });
+                                }
                             });
                         }
                     });
@@ -3009,6 +3189,9 @@ fn main() {
                                         pinned,
                                         tags,
                                     );
+                                }
+                                QuickNoteIpc::RefreshLabels => {
+                                    sync_keep_labels(&app_handle);
                                 }
                                 QuickNoteIpc::Close => {
                                     hide_quick_note(&app_handle, true);
@@ -3139,14 +3322,6 @@ fn main() {
                 initial_compact,
                 None::<&str>,
             )?;
-            let filter_bar_item = CheckMenuItem::with_id(
-                app,
-                "filter_bar",
-                "Barra de filtros rápidos",
-                true,
-                initial_filter_bar,
-                None::<&str>,
-            )?;
             let appearance_submenu = Submenu::with_id_and_items(
                 app,
                 "appearance_menu",
@@ -3159,7 +3334,6 @@ fn main() {
                     &theme_catppuccin_item,
                     &sep_appearance,
                     &compact_mode_item,
-                    &filter_bar_item,
                 ],
             )?;
 
@@ -3214,7 +3388,6 @@ fn main() {
             let theme_nord_clone = theme_nord_item.clone();
             let theme_catppuccin_clone = theme_catppuccin_item.clone();
             let compact_clone = compact_mode_item.clone();
-            let filter_bar_clone = filter_bar_item.clone();
 
             let mut tray_builder = TrayIconBuilder::new()
                 .menu(&menu)
@@ -3293,18 +3466,6 @@ fn main() {
                             false
                         };
                         let _ = compact_clone.set_checked(next);
-                        apply_main_ui_enhancements(app);
-                    }
-                    "filter_bar" => {
-                        let state = app.state::<AppState>();
-                        let next = if let Ok(mut cfg) = state.config.lock() {
-                            cfg.filter_bar = !cfg.filter_bar;
-                            save_config(&state.config_path, &cfg);
-                            cfg.filter_bar
-                        } else {
-                            true
-                        };
-                        let _ = filter_bar_clone.set_checked(next);
                         apply_main_ui_enhancements(app);
                     }
                     "zoom_in" => {
