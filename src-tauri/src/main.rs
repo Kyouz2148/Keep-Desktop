@@ -1541,13 +1541,99 @@ fn build_submit_note_js(
     return null;
   }}
 
+  function collectEditableBoxes(root) {{
+    if (!root) return [];
+    var candidates = root.querySelectorAll(
+      '[contenteditable="true"], [contenteditable=""], [contenteditable="plaintext-only"]'
+    );
+    var out = [];
+    for (var i = 0; i < candidates.length; i++) {{
+      var cand = candidates[i];
+      if (!cand || cand.nodeType !== 1) continue;
+      if (cand.getAttribute('role') === 'button') continue;
+      if (cand.closest('[role="dialog"]') && root === document) continue;
+      if (cand.isContentEditable !== true) continue;
+      if (!isElementVisible(cand)) continue;
+      var nested = false;
+      for (var u = 0; u < out.length; u++) {{
+        if (out[u] === cand || out[u].contains(cand)) {{
+          nested = true;
+          break;
+        }}
+      }}
+      if (!nested) {{
+        out.push(cand);
+      }}
+    }}
+    return out;
+  }}
+
   function looksLikeTitleBox(box) {{
+    if (!box) return false;
+    if (box.classList && box.classList.contains('r4nke-YPqjbf')) return true;
     var bal = (box.getAttribute('aria-label') || '').toLowerCase();
-    if (bal.indexOf('título') !== -1 || bal.indexOf('titulo') !== -1 || bal.indexOf('title') !== -1) {{
+    var ph = (box.getAttribute('data-placeholder') || box.getAttribute('placeholder') || '').toLowerCase();
+    if (
+      bal.indexOf('título') !== -1 ||
+      bal.indexOf('titulo') !== -1 ||
+      bal.indexOf('title') !== -1 ||
+      ph.indexOf('título') !== -1 ||
+      ph.indexOf('titulo') !== -1 ||
+      ph.indexOf('title') !== -1
+    ) {{
       return true;
     }}
     var parentTxt = (box.parentElement ? box.parentElement.textContent || '' : '').trim().toLowerCase();
     return parentTxt === 'título' || parentTxt === 'titulo' || parentTxt === 'title';
+  }}
+
+  function looksLikeBodyBox(box) {{
+    if (!box) return false;
+    if (box.classList && box.classList.contains('h1U9Be-YPqjbf')) return true;
+    var bal = (box.getAttribute('aria-label') || '').toLowerCase();
+    var ph = (box.getAttribute('data-placeholder') || box.getAttribute('placeholder') || '').toLowerCase();
+    var combined = bal + ' ' + ph;
+    if (
+      combined.indexOf('criar uma nota') !== -1 ||
+      combined.indexOf('take a note') !== -1 ||
+      combined.indexOf('adicionar uma nota') !== -1 ||
+      combined.indexOf('añadir una nota') !== -1 ||
+      combined.indexOf('crear una nota') !== -1 ||
+      combined.indexOf('notiz schreiben') !== -1 ||
+      bal === 'nota' ||
+      bal === 'note'
+    ) {{
+      return true;
+    }}
+    var parentTxt = (box.parentElement ? box.parentElement.textContent || '' : '')
+      .replace(/\u2026/g, '...')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase();
+    return (
+      parentTxt === 'criar uma nota...' ||
+      parentTxt === 'criar uma nota' ||
+      parentTxt === 'take a note...' ||
+      parentTxt === 'take a note'
+    );
+  }}
+
+  function countCloseButtons(root) {{
+    if (!root) return 0;
+    var nodes = root.querySelectorAll('[role="button"], button');
+    var count = 0;
+    for (var i = 0; i < nodes.length; i++) {{
+      if (nodes[i].closest('[role="dialog"]')) continue;
+      var al = (nodes[i].getAttribute('aria-label') || '').toLowerCase();
+      var tt = (nodes[i].getAttribute('data-tooltip') || '').toLowerCase();
+      var tx = (nodes[i].textContent || '').trim().toLowerCase();
+      var isClose = tx === 'fechar' || tx === 'close' || tx === 'cerrar' || tx === 'fermer'
+        || al === 'fechar' || al === 'close' || tt === 'fechar' || tt === 'close';
+      if (isClose && isElementVisible(nodes[i])) {{
+        count++;
+      }}
+    }}
+    return count;
   }}
 
   function findExpandedComposer() {{
@@ -1564,41 +1650,54 @@ fn build_submit_note_js(
 
       var cur = btn.parentElement;
       for (var d = 0; d < 12 && cur && cur !== document.body; d++) {{
-        var boxes = cur.querySelectorAll('[contenteditable="true"]:not([role="button"]), div[role="textbox"]:not([role="button"])');
-        var visibleBoxes = [];
-        for (var b = 0; b < boxes.length; b++) {{
-          if (!boxes[b].closest('[role="dialog"]') && isElementVisible(boxes[b])) {{
-            visibleBoxes.push(boxes[b]);
-          }}
-        }}
+        var visibleBoxes = collectEditableBoxes(cur);
         if (visibleBoxes.length >= 1) {{
+          var chosenRoot = cur;
+          var chosenBoxes = visibleBoxes;
+          if (chosenBoxes.length === 1) {{
+            var probeParent = cur.parentElement;
+            for (var extra = 0; extra < 2 && probeParent && probeParent !== document.body; extra++) {{
+              if (countCloseButtons(probeParent) > 1) break;
+              var parentBoxes = collectEditableBoxes(probeParent);
+              if (parentBoxes.length >= 2 && parentBoxes.length <= 4) {{
+                chosenRoot = probeParent;
+                chosenBoxes = parentBoxes;
+                break;
+              }}
+              probeParent = probeParent.parentElement;
+            }}
+          }}
+
           var titleBox = null;
           var bodyBox = null;
-          if (visibleBoxes.length === 1) {{
-            if (looksLikeTitleBox(visibleBoxes[0])) {{
-              titleBox = visibleBoxes[0];
-            }} else {{
-              bodyBox = visibleBoxes[0];
+          for (var i = 0; i < chosenBoxes.length; i++) {{
+            var box = chosenBoxes[i];
+            if (!titleBox && looksLikeTitleBox(box) && !looksLikeBodyBox(box)) {{
+              titleBox = box;
+            }} else if (!bodyBox && looksLikeBodyBox(box) && !looksLikeTitleBox(box)) {{
+              bodyBox = box;
             }}
-          }} else {{
-            for (var i = 0; i < visibleBoxes.length; i++) {{
-              if (!titleBox && looksLikeTitleBox(visibleBoxes[i])) {{
-                titleBox = visibleBoxes[i];
-              }} else if (!bodyBox) {{
-                bodyBox = visibleBoxes[i];
+          }}
+          if (chosenBoxes.length === 1) {{
+            if (!titleBox && !bodyBox) {{
+              if (looksLikeTitleBox(chosenBoxes[0])) {{
+                titleBox = chosenBoxes[0];
+              }} else {{
+                bodyBox = chosenBoxes[0];
               }}
             }}
-            if (!titleBox) titleBox = visibleBoxes[0];
-            if (!bodyBox || bodyBox === titleBox) {{
-              for (var j = 0; j < visibleBoxes.length; j++) {{
-                if (visibleBoxes[j] !== titleBox) {{
-                  bodyBox = visibleBoxes[j];
-                  break;
-                }}
+          }} else {{
+            for (var j = 0; j < chosenBoxes.length; j++) {{
+              var rem = chosenBoxes[j];
+              if (rem === titleBox || rem === bodyBox) continue;
+              if (!titleBox && !looksLikeBodyBox(rem)) {{
+                titleBox = rem;
+              }} else if (!bodyBox && !looksLikeTitleBox(rem)) {{
+                bodyBox = rem;
               }}
             }}
           }}
-          return {{ root: cur, titleBox: titleBox, bodyBox: bodyBox, closeBtn: btn }};
+          return {{ root: chosenRoot, titleBox: titleBox, bodyBox: bodyBox, closeBtn: btn }};
         }}
         cur = cur.parentElement;
       }}
@@ -1606,45 +1705,97 @@ fn build_submit_note_js(
     return null;
   }}
 
+  function containsExpectedText(el, expected) {{
+    if (!el) return false;
+    var norm = String(expected || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    var nonEmptyLines = norm.split('\n').map(function (l) {{ return l.trim(); }}).filter(Boolean);
+    if (!nonEmptyLines.length) return true;
+    var firstLine = nonEmptyLines[0];
+    var lastLine = nonEmptyLines[nonEmptyLines.length - 1];
+    var firstProbe = firstLine.slice(0, Math.min(20, firstLine.length));
+    var lastProbe = lastLine.slice(0, Math.min(20, lastLine.length));
+    var got = (el.innerText || el.textContent || '').replace(/\r/g, '');
+    return got.indexOf(firstProbe) !== -1 && got.indexOf(lastProbe) !== -1;
+  }}
+
   function insertIntoEditable(el, value) {{
-    if (!el || !value) return true;
+    if (!el) return false;
+    if (!value) return true;
+    var normalizedExpected = String(value).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
+    dispatchClick(el);
     try {{ el.focus(); }} catch (_) {{}}
-    var normalizedExpected = String(value).replace(/\r/g, '');
-    var probe = normalizedExpected.slice(0, Math.min(20, normalizedExpected.length));
 
-    function containsProbe() {{
-      var got = (el.textContent || el.innerText || '').replace(/\r/g, '');
-      return !probe || got.indexOf(probe) !== -1;
-    }}
-
-    try {{
+    function clearEditableSelection() {{
       var sel = window.getSelection();
       var range = document.createRange();
       range.selectNodeContents(el);
       sel.removeAllRanges();
       sel.addRange(range);
-      if (typeof document.execCommand === 'function') {{
+      if (typeof document.execCommand === 'function' && (el.textContent || '').length > 0) {{
         document.execCommand('selectAll', false, null);
-        var ok = document.execCommand('insertText', false, value);
-        if (ok && containsProbe()) {{
-          el.dispatchEvent(new Event('input', {{ bubbles: true }}));
-          el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+        document.execCommand('delete', false, null);
+      }} else {{
+        range.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }}
+    }}
+
+    function notifyInput() {{
+      try {{
+        el.dispatchEvent(new InputEvent('input', {{
+          bubbles: true,
+          inputType: 'insertText',
+          data: normalizedExpected
+        }}));
+      }} catch (_) {{
+        el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+      }}
+      el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+    }}
+
+    try {{
+      clearEditableSelection();
+      if (typeof document.execCommand === 'function') {{
+        var ok = document.execCommand('insertText', false, normalizedExpected);
+        if (ok && containsExpectedText(el, normalizedExpected)) {{
+          notifyInput();
           return true;
+        }}
+        if (normalizedExpected.indexOf('\n') !== -1) {{
+          clearEditableSelection();
+          var splitLines = normalizedExpected.split('\n');
+          var lineOk = true;
+          for (var li = 0; li < splitLines.length; li++) {{
+            if (li > 0) {{
+              document.execCommand('insertLineBreak', false, null);
+            }}
+            if (splitLines[li].length > 0) {{
+              if (!document.execCommand('insertText', false, splitLines[li])) {{
+                lineOk = false;
+              }}
+            }}
+          }}
+          if (lineOk && containsExpectedText(el, normalizedExpected)) {{
+            notifyInput();
+            return true;
+          }}
         }}
       }}
     }} catch (_) {{}}
 
     try {{
+      clearEditableSelection();
       var dt = new DataTransfer();
-      dt.setData('text/plain', value);
+      dt.setData('text/plain', normalizedExpected);
       el.dispatchEvent(new ClipboardEvent('paste', {{
         bubbles: true,
         cancelable: true,
         clipboardData: dt
       }}));
-      if (containsProbe()) {{
-        el.dispatchEvent(new Event('input', {{ bubbles: true }}));
-        el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+      if (containsExpectedText(el, normalizedExpected)) {{
+        notifyInput();
         return true;
       }}
     }} catch (_) {{}}
@@ -1652,7 +1803,7 @@ fn build_submit_note_js(
     while (el.firstChild) {{
       el.removeChild(el.firstChild);
     }}
-    var lines = String(value).replace(/\r\n/g, '\n').split('\n');
+    var lines = normalizedExpected.split('\n');
     for (var i = 0; i < lines.length; i++) {{
       if (i > 0) {{
         el.appendChild(document.createElement('br'));
@@ -1666,25 +1817,16 @@ fn build_submit_note_js(
         bubbles: true,
         cancelable: true,
         inputType: 'insertText',
-        data: value
+        data: normalizedExpected
       }}));
     }} catch (_) {{}}
+    notifyInput();
     try {{
-      el.dispatchEvent(new InputEvent('input', {{
-        bubbles: true,
-        inputType: 'insertText',
-        data: value
-      }}));
-    }} catch (_) {{
-      el.dispatchEvent(new Event('input', {{ bubbles: true }}));
-    }}
-    try {{
-      el.dispatchEvent(new CompositionEvent('compositionend', {{ bubbles: true, data: value }}));
+      el.dispatchEvent(new CompositionEvent('compositionend', {{ bubbles: true, data: normalizedExpected }}));
     }} catch (_) {{}}
     el.dispatchEvent(new KeyboardEvent('keydown', {{ key: 'a', code: 'KeyA', bubbles: true }}));
     el.dispatchEvent(new KeyboardEvent('keyup', {{ key: 'a', code: 'KeyA', bubbles: true }}));
-    el.dispatchEvent(new Event('change', {{ bubbles: true }}));
-    return containsProbe();
+    return containsExpectedText(el, normalizedExpected);
   }}
 
   function findCreateLabelButton(tagName) {{
@@ -1858,11 +2000,11 @@ fn build_submit_note_js(
       }}
 
       var item = cfg.items[idx];
-      var inputs = comp.root.querySelectorAll('[contenteditable="true"]:not([role="button"]), div[role="textbox"]:not([role="button"])');
+      var inputs = collectEditableBoxes(comp.root);
       var targetInput = null;
       var lastInput = null;
       for (var i = 0; i < inputs.length; i++) {{
-        if (!inputs[i].closest('[role="dialog"]') && inputs[i] !== titleBox && isElementVisible(inputs[i])) {{
+        if (inputs[i] !== titleBox) {{
           lastInput = inputs[i];
           if (!(inputs[i].textContent || '').trim()) {{
             targetInput = inputs[i];
@@ -1975,30 +2117,55 @@ fn build_submit_note_js(
         ? cfg.items.map(function (i) {{ return i.text; }}).join('\n')
         : (cfg.body || '').trimEnd();
 
-      var okTitle = true;
-      var okBody = true;
-      if (cleanTitle && comp.titleBox) {{
-        okTitle = insertIntoEditable(comp.titleBox, cleanTitle);
+      if (cleanBody && !comp.bodyBox && attempts < 12) {{
+        setTimeout(step, 200);
+        return;
       }}
-      if (cleanBody && comp.bodyBox) {{
-        okBody = insertIntoEditable(comp.bodyBox, cleanBody);
-      }} else if (cleanTitle && !comp.titleBox && comp.bodyBox) {{
-        okBody = insertIntoEditable(comp.bodyBox, cleanTitle);
-      }} else if (cleanBody && !comp.bodyBox && comp.titleBox) {{
-        okBody = insertIntoEditable(comp.titleBox, cleanBody);
-      }} else if (!comp.bodyBox && !comp.titleBox) {{
+
+      if (!comp.bodyBox && !comp.titleBox) {{
         setStatus(true, false, 'populating', 'Campos de edição do Keep não encontrados');
         return;
       }}
 
-      if (!okTitle && !okBody) {{
-        setStatus(true, false, 'populating', 'O editor do Keep não aceitou o texto');
-        return;
+      var targetBodyBox = comp.bodyBox || comp.titleBox;
+      var targetTitleBox = comp.titleBox;
+      if (cleanTitle && !targetTitleBox && comp.bodyBox && !cleanBody) {{
+        targetTitleBox = comp.bodyBox;
       }}
 
-      setTimeout(function () {{
-        applyColorAndPinAndClose(comp);
-      }}, 220);
+      function finishPopulate() {{
+        var bodyVerified = !cleanBody || (targetBodyBox && containsExpectedText(targetBodyBox, cleanBody));
+        if (cleanBody && !bodyVerified && targetBodyBox) {{
+          insertIntoEditable(targetBodyBox, cleanBody);
+          bodyVerified = containsExpectedText(targetBodyBox, cleanBody);
+        }}
+        var titleVerified = !cleanTitle || !targetTitleBox || containsExpectedText(targetTitleBox, cleanTitle);
+        if ((cleanBody && !bodyVerified) || (!bodyVerified && !titleVerified)) {{
+          setStatus(true, false, 'populating', 'O editor do Keep não manteve o conteúdo da nota');
+          return;
+        }}
+        var latest = findExpandedComposer() || comp;
+        applyColorAndPinAndClose(latest);
+      }}
+
+      function insertTitleStep() {{
+        if (cleanTitle && targetTitleBox && targetTitleBox !== targetBodyBox) {{
+          insertIntoEditable(targetTitleBox, cleanTitle);
+          setTimeout(finishPopulate, 160);
+        }} else if (cleanTitle && targetTitleBox === targetBodyBox && !cleanBody) {{
+          insertIntoEditable(targetTitleBox, cleanTitle);
+          setTimeout(finishPopulate, 160);
+        }} else {{
+          setTimeout(finishPopulate, 140);
+        }}
+      }}
+
+      if (cleanBody && targetBodyBox) {{
+        insertIntoEditable(targetBodyBox, cleanBody);
+        setTimeout(insertTitleStep, 140);
+      }} else {{
+        insertTitleStep();
+      }}
       return;
     }}
 
@@ -2942,6 +3109,17 @@ fn main() {
     let start_minimized = std::env::args().any(|arg| arg == "--minimized");
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            let minimized = args.iter().any(|arg| arg == "--minimized");
+            if !minimized {
+                let app_handle = app.clone();
+                let _ = app.run_on_main_thread(move || {
+                    if let Some(win) = app_handle.get_window("main") {
+                        show_and_focus_window(&win);
+                    }
+                });
+            }
+        }))
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
@@ -3389,7 +3567,7 @@ fn main() {
             let theme_catppuccin_clone = theme_catppuccin_item.clone();
             let compact_clone = compact_mode_item.clone();
 
-            let mut tray_builder = TrayIconBuilder::new()
+            let mut tray_builder = TrayIconBuilder::with_id("main-tray")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(move |app, event| match event.id.as_ref() {

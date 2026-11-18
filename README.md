@@ -31,7 +31,7 @@ O objetivo do **Google Keep Desktop** é oferecer uma janela dedicada, discreta,
 
 ---
 
-## Recursos atuais (`v0.2.6`)
+## Recursos atuais (`v0.2.7`)
 
 <div align="center">
   <img src="docs/tray-menu.jpg" alt="Menu da bandeja do sistema (System Tray) do Google Keep Desktop" width="460" />
@@ -39,9 +39,10 @@ O objetivo do **Google Keep Desktop** é oferecer uma janela dedicada, discreta,
 
 <br />
 
-- **Bandeja do sistema (System Tray)**:
+- **Bandeja do sistema (System Tray) e instância única**:
   - Clique esquerdo no ícone alterna entre mostrar e ocultar a janela.
   - Fechar no `X` apenas oculta o app na bandeja, mantendo sua sessão do Google ativa e abertura instantânea.
+  - Garantia de **instância única** (`tauri-plugin-single-instance`): abrir o aplicativo novamente foca a janela existente em vez de duplicar o processo e o ícone na bandeja.
 - **Atalho global de nota rápida (`Ctrl + K`)**:
   - `Ctrl + K` — Abre **apenas uma mini-janela flutuante** (com cantos arredondados nativos no Windows 11, arrastável pelo cabeçalho) sem abrir a janela principal do Keep.
   - Suporta **seletor de cor** (paleta oficial Keep), **modo checklist** interativo, **fixar no topo**, **seletor de marcadores do Keep** (lista e sincroniza os marcadores existentes e permite criar novos diretamente pelo atalho), **recuperação de rascunho** caso fechada com `Esc`, auto-expansão de altura, validação real de salvamento e envio silencioso (`Ctrl + Enter` salva, `Esc` fecha).
