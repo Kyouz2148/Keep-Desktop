@@ -35,69 +35,499 @@ const AUTOSTART_MENU_LABEL: &str = "Iniciar com o Windows";
 #[cfg(not(target_os = "windows"))]
 const AUTOSTART_MENU_LABEL: &str = "Iniciar com o sistema";
 
-const QUICK_NOTE_JS: &str = r#"(function () {
-  function isVisible(el) {
+const QUICK_NOTE_HTML: &str = r#"<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Nova nota rápida</title>
+<style>
+  :root {
+    color-scheme: dark;
+  }
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+  html, body {
+    width: 100%;
+    height: 100%;
+    background: #202124;
+    color: #e8eaed;
+    font-family: 'Segoe UI', system-ui, -apple-system, Roboto, sans-serif;
+    overflow: hidden;
+    user-select: none;
+  }
+  .card {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    background: #202124;
+    border: 1px solid #3c4043;
+  }
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    border-bottom: 1px solid #2d2e30;
+    background: #252629;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #e8eaed;
+  }
+  .brand-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #fbbc04;
+    box-shadow: 0 0 8px rgba(251, 188, 4, 0.45);
+  }
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .link-btn {
+    border: 1px solid #3c4043;
+    background: transparent;
+    color: #9aa0a6;
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+  }
+  .link-btn:hover {
+    background: #303134;
+    color: #e8eaed;
+  }
+  .close-btn {
+    width: 24px;
+    height: 24px;
+    border: none;
+    background: transparent;
+    color: #9aa0a6;
+    font-size: 18px;
+    line-height: 1;
+    border-radius: 5px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .close-btn:hover {
+    background: #35363a;
+    color: #e8eaed;
+  }
+  .fields {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 12px 16px 8px;
+    gap: 8px;
+    min-height: 0;
+  }
+  #note-title {
+    width: 100%;
+    border: none;
+    outline: none;
+    background: transparent;
+    color: #e8eaed;
+    font-size: 16px;
+    font-weight: 600;
+    font-family: inherit;
+    padding: 4px 0;
+  }
+  #note-title::placeholder {
+    color: #80868b;
+  }
+  #note-body {
+    flex: 1;
+    width: 100%;
+    border: none;
+    outline: none;
+    resize: none;
+    background: transparent;
+    color: #e8eaed;
+    font-size: 14px;
+    line-height: 1.5;
+    font-family: inherit;
+    padding: 4px 0;
+  }
+  #note-body::placeholder {
+    color: #80868b;
+  }
+  .footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    border-top: 1px solid #2d2e30;
+    background: #252629;
+  }
+  .hint {
+    font-size: 11px;
+    color: #9aa0a6;
+  }
+  .hint.warn {
+    color: #fbbc04;
+  }
+  .actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .btn-ghost {
+    border: 1px solid #3c4043;
+    background: transparent;
+    color: #e8eaed;
+    font-size: 12px;
+    font-weight: 500;
+    padding: 6px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .btn-ghost:hover {
+    background: #303134;
+  }
+  .btn-primary {
+    border: none;
+    background: #fbbc04;
+    color: #202124;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 6px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .btn-primary:hover {
+    background: #fcc934;
+  }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="header">
+      <div class="brand">
+        <span class="brand-dot"></span>
+        <span>Nova nota rápida</span>
+      </div>
+      <div class="header-actions">
+        <button id="btn-open-main" class="link-btn" type="button" title="Abrir janela completa do Keep">Abrir Keep</button>
+        <button id="btn-close" class="close-btn" type="button" title="Fechar (Esc)">&times;</button>
+      </div>
+    </div>
+    <div class="fields">
+      <input id="note-title" type="text" placeholder="Título" autocomplete="off" />
+      <textarea id="note-body" placeholder="Criar uma nota..."></textarea>
+    </div>
+    <div class="footer">
+      <span id="hint-text" class="hint">Ctrl+Enter salvar &middot; Esc fechar</span>
+      <div class="actions">
+        <button id="btn-cancel" class="btn-ghost" type="button">Cancelar</button>
+        <button id="btn-save" class="btn-primary" type="button">Salvar nota</button>
+      </div>
+    </div>
+  </div>
+  <script>
+    (function () {
+      var DEFAULT_HINT = 'Ctrl+Enter salvar \u00b7 Esc fechar';
+      var titleEl = document.getElementById('note-title');
+      var bodyEl = document.getElementById('note-body');
+      var hintEl = document.getElementById('hint-text');
+
+      function send(payload) {
+        if (window.ipc && typeof window.ipc.postMessage === 'function') {
+          window.ipc.postMessage(JSON.stringify(payload));
+        }
+      }
+
+      window.focusQuickNote = function () {
+        hintEl.textContent = DEFAULT_HINT;
+        hintEl.classList.remove('warn');
+        setTimeout(function () {
+          bodyEl.focus();
+        }, 20);
+      };
+
+      window.resetQuickNote = function () {
+        titleEl.value = '';
+        bodyEl.value = '';
+        hintEl.textContent = DEFAULT_HINT;
+        hintEl.classList.remove('warn');
+      };
+
+      function submitNote() {
+        var title = titleEl.value.trim();
+        var body = bodyEl.value.trim();
+        if (!title && !body) {
+          hintEl.textContent = 'Digite algo antes de salvar';
+          hintEl.classList.add('warn');
+          bodyEl.focus();
+          return;
+        }
+        send({
+          action: 'submit',
+          title: titleEl.value,
+          body: bodyEl.value
+        });
+      }
+
+      function closeModal() {
+        send({ action: 'close' });
+      }
+
+      titleEl.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
+          e.preventDefault();
+          bodyEl.focus();
+        }
+      });
+
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          closeModal();
+        } else if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+          e.preventDefault();
+          submitNote();
+        }
+      });
+
+      document.getElementById('btn-save').addEventListener('click', submitNote);
+      document.getElementById('btn-cancel').addEventListener('click', closeModal);
+      document.getElementById('btn-close').addEventListener('click', closeModal);
+      document.getElementById('btn-open-main').addEventListener('click', function () {
+        send({ action: 'open_main' });
+      });
+      document.querySelector('.header').addEventListener('mousedown', function (e) {
+        if (e.button === 0 && !e.target.closest('button')) {
+          send({ action: 'drag' });
+        }
+      });
+
+      window.addEventListener('DOMContentLoaded', function () {
+        bodyEl.focus();
+      });
+    })();
+  </script>
+</body>
+</html>"#;
+
+fn build_submit_note_js(title: &str, body: &str) -> String {
+    let title_json = serde_json::to_string(title).unwrap_or_else(|_| "\"\"".to_string());
+    let body_json = serde_json::to_string(body).unwrap_or_else(|_| "\"\"".to_string());
+    format!(
+        r#"(function (titleText, bodyText) {{
+  var attempts = 0;
+  var maxAttempts = 50;
+
+  function isNotHiddenByStyle(el) {{
     if (!el) return false;
-    var style = window.getComputedStyle(el);
-    if (style.display === 'none' || style.visibility === 'hidden') return false;
-    var rect = el.getBoundingClientRect();
-    return rect.width > 40 && rect.height > 15;
-  }
+    var cur = el;
+    while (cur && cur.nodeType === 1) {{
+      var st = window.getComputedStyle(cur);
+      if (st.display === 'none' || st.visibility === 'hidden') return false;
+      cur = cur.parentElement;
+    }}
+    return true;
+  }}
 
-  function findComposerBox() {
-    var labelled = document.querySelectorAll(
-      'div[role="textbox"][aria-label*="Criar uma nota" i], div[role="textbox"][aria-label*="Take a note" i], [aria-label="Criar uma nota..."], [aria-label="Take a note..."]'
-    );
-    for (var i = 0; i < labelled.length; i++) {
-      if (!labelled[i].closest('[role="dialog"]') && isVisible(labelled[i])) {
-        return labelled[i];
-      }
-    }
-
+  function findCollapsedOrBodyComposer() {{
+    var selectors = [
+      'div[role="textbox"][aria-label*="Criar uma nota" i]',
+      'div[role="textbox"][aria-label*="Take a note" i]',
+      '[aria-label="Criar uma nota..."]',
+      '[aria-label="Take a note..."]'
+    ];
+    for (var s = 0; s < selectors.length; s++) {{
+      var list = document.querySelectorAll(selectors[s]);
+      for (var i = 0; i < list.length; i++) {{
+        if (!list[i].closest('[role="dialog"]') && isNotHiddenByStyle(list[i])) {{
+          return list[i];
+        }}
+      }}
+    }}
     var boxes = document.querySelectorAll('div[role="textbox"][contenteditable="true"]');
-    for (var j = 0; j < boxes.length; j++) {
-      if (!boxes[j].closest('[role="dialog"]') && isVisible(boxes[j])) {
+    for (var j = 0; j < boxes.length; j++) {{
+      if (!boxes[j].closest('[role="dialog"]') && isNotHiddenByStyle(boxes[j])) {{
         return boxes[j];
-      }
-    }
+      }}
+    }}
     return null;
-  }
+  }}
 
-  function triggerComposer() {
-    var box = findComposerBox();
-    if (box) {
-      box.click();
-      box.focus();
-      return true;
-    }
-    return false;
-  }
+  function findTitleBox() {{
+    var list = document.querySelectorAll(
+      'div[role="textbox"][aria-label*="Título" i], div[role="textbox"][aria-label*="Title" i]'
+    );
+    for (var i = 0; i < list.length; i++) {{
+      if (!list[i].closest('[role="dialog"]') && isNotHiddenByStyle(list[i])) {{
+        return list[i];
+      }}
+    }}
+    return null;
+  }}
 
-  if (!triggerComposer()) {
-    if (window.location.hash && window.location.hash !== '#home') {
+  function findBodyBox(titleBox) {{
+    var list = document.querySelectorAll(
+      'div[role="textbox"][aria-label*="Criar uma nota" i], div[role="textbox"][aria-label*="Take a note" i]'
+    );
+    for (var i = 0; i < list.length; i++) {{
+      if (!list[i].closest('[role="dialog"]') && isNotHiddenByStyle(list[i])) {{
+        return list[i];
+      }}
+    }}
+    if (titleBox) {{
+      var root = titleBox.closest('div[tabindex]') || (titleBox.parentElement && titleBox.parentElement.parentElement && titleBox.parentElement.parentElement.parentElement);
+      if (root) {{
+        var boxes = root.querySelectorAll('div[role="textbox"][contenteditable="true"]');
+        for (var j = 0; j < boxes.length; j++) {{
+          if (boxes[j] !== titleBox && isNotHiddenByStyle(boxes[j])) {{
+            return boxes[j];
+          }}
+        }}
+      }}
+    }}
+    return null;
+  }}
+
+  function findCloseButton(referenceEl) {{
+    var scopes = [];
+    if (referenceEl) {{
+      var p = referenceEl.parentElement;
+      for (var d = 0; d < 6 && p; d++) {{
+        scopes.push(p);
+        p = p.parentElement;
+      }}
+    }}
+    scopes.push(document);
+    for (var s = 0; s < scopes.length; s++) {{
+      var btns = scopes[s].querySelectorAll('[role="button"], button');
+      for (var i = 0; i < btns.length; i++) {{
+        if (btns[i].closest('[role="dialog"]')) continue;
+        var txt = (btns[i].textContent || '').trim().toLowerCase();
+        if (txt === 'fechar' || txt === 'close' || txt === 'cerrar' || txt === 'fermer') {{
+          if (isNotHiddenByStyle(btns[i])) return btns[i];
+        }}
+      }}
+    }}
+    return null;
+  }}
+
+  function insertIntoEditable(el, value) {{
+    if (!el || !value) return;
+    el.focus();
+    try {{
+      var sel = window.getSelection();
+      var range = document.createRange();
+      range.selectNodeContents(el);
+      sel.removeAllRanges();
+      sel.addRange(range);
+      if (document.execCommand('insertText', false, value) && (el.textContent || '').length > 0) {{
+        return;
+      }}
+    }} catch (e) {{}}
+
+    el.textContent = value;
+    try {{
+      el.dispatchEvent(new InputEvent('input', {{ bubbles: true, inputType: 'insertText', data: value }}));
+    }} catch (e) {{
+      el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+    }}
+    el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+  }}
+
+  function step() {{
+    attempts++;
+    if (attempts > maxAttempts) return;
+
+    var openDialog = document.querySelector('[role="dialog"]');
+    if (openDialog) {{
+      document.dispatchEvent(
+        new KeyboardEvent('keydown', {{
+          key: 'Escape',
+          code: 'Escape',
+          keyCode: 27,
+          which: 27,
+          bubbles: true
+        }})
+      );
+      setTimeout(step, 200);
+      return;
+    }}
+
+    if (window.location.hash && window.location.hash !== '#home') {{
       window.location.hash = '#home';
-      setTimeout(triggerComposer, 300);
-    } else {
-      var active = document.activeElement;
-      var inInput =
-        active &&
-        (active.tagName === 'INPUT' ||
-          active.tagName === 'TEXTAREA' ||
-          active.isContentEditable);
-      if (!inInput && !document.querySelector('[role="dialog"]')) {
-        document.dispatchEvent(
-          new KeyboardEvent('keydown', {
-            key: 'c',
-            code: 'KeyC',
-            keyCode: 67,
-            which: 67,
-            bubbles: true,
-          })
-        );
-      }
-    }
-  }
-})();"#;
+      setTimeout(step, 250);
+      return;
+    }}
+
+    var box = findCollapsedOrBodyComposer();
+    if (!box) {{
+      setTimeout(step, 200);
+      return;
+    }}
+
+    box.dispatchEvent(new MouseEvent('mousedown', {{ bubbles: true }}));
+    box.click();
+    box.focus();
+
+    setTimeout(function () {{
+      var titleBox = findTitleBox();
+      var bodyBox = findBodyBox(titleBox) || findCollapsedOrBodyComposer();
+
+      if (!bodyBox && !titleBox) {{
+        setTimeout(step, 200);
+        return;
+      }}
+
+      var cleanTitle = (titleText || '').trim();
+      var cleanBody = (bodyText || '').trimEnd();
+
+      if (cleanTitle && titleBox) {{
+        insertIntoEditable(titleBox, cleanTitle);
+      }}
+      if (cleanBody && bodyBox) {{
+        insertIntoEditable(bodyBox, cleanBody);
+      }} else if (cleanTitle && !titleBox && bodyBox) {{
+        insertIntoEditable(bodyBox, cleanTitle);
+      }}
+
+      setTimeout(function () {{
+        var refEl = bodyBox || titleBox;
+        var closeBtn = findCloseButton(refEl);
+        if (closeBtn) {{
+          closeBtn.click();
+        }} else if (refEl) {{
+          refEl.blur();
+          document.body.click();
+        }}
+      }}, 200);
+    }}, 160);
+  }}
+
+  step();
+}})({title_json}, {body_json});"#
+    )
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+enum QuickNoteIpc {
+    Submit { title: String, body: String },
+    Close,
+    OpenMain,
+    Drag,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -135,14 +565,12 @@ struct AppState {
 thread_local! {
     static KEEP_CONTEXT: RefCell<Option<wry::WebContext>> = const { RefCell::new(None) };
     static KEEP_WEBVIEW: RefCell<Option<wry::WebView>> = const { RefCell::new(None) };
-}
-
-fn toggle_shortcut() -> Shortcut {
-    Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyK)
+    static QUICK_NOTE_CONTEXT: RefCell<Option<wry::WebContext>> = const { RefCell::new(None) };
+    static QUICK_NOTE_WEBVIEW: RefCell<Option<wry::WebView>> = const { RefCell::new(None) };
 }
 
 fn quick_note_shortcut() -> Shortcut {
-    Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyN)
+    Shortcut::new(Some(Modifiers::CONTROL), Code::KeyK)
 }
 
 fn clamp_zoom(zoom: f64) -> f64 {
@@ -194,6 +622,19 @@ where
     });
 }
 
+fn with_quick_note_webview<F>(window: &Window, f: F)
+where
+    F: FnOnce(&wry::WebView) + Send + 'static,
+{
+    let _ = window.run_on_main_thread(move || {
+        QUICK_NOTE_WEBVIEW.with(|cell| {
+            if let Some(wv) = cell.borrow().as_ref() {
+                f(wv);
+            }
+        });
+    });
+}
+
 fn show_and_focus_window(window: &Window) {
     let _ = window.show();
     let _ = window.unminimize();
@@ -216,14 +657,52 @@ fn toggle_window(app: &AppHandle) {
     }
 }
 
+fn hide_quick_note(app: &AppHandle, clear: bool) {
+    if let Some(qn_win) = app.get_window("quick-note") {
+        let _ = qn_win.hide();
+        if clear {
+            with_quick_note_webview(&qn_win, |wv| {
+                let _ = wv.evaluate_script("window.resetQuickNote && window.resetQuickNote();");
+            });
+        }
+    }
+}
+
 fn trigger_quick_note(app: &AppHandle) {
-    if let Some(window) = app.get_window("main") {
-        let _ = window.show();
-        let _ = window.unminimize();
-        let _ = window.set_focus();
-        with_keep_webview(&window, |wv| {
+    if let Some(qn_win) = app.get_window("quick-note") {
+        let is_visible = qn_win.is_visible().unwrap_or(false);
+        let is_focused = qn_win.is_focused().unwrap_or(false);
+        if is_visible && is_focused {
+            hide_quick_note(app, true);
+            return;
+        }
+        let _ = qn_win.center();
+        let _ = qn_win.show();
+        let _ = qn_win.unminimize();
+        let _ = qn_win.set_focus();
+        with_quick_note_webview(&qn_win, |wv| {
             let _ = wv.focus();
-            let _ = wv.evaluate_script(QUICK_NOTE_JS);
+            let _ = wv.evaluate_script("window.focusQuickNote && window.focusQuickNote();");
+        });
+    }
+}
+
+fn submit_quick_note_to_keep(app: &AppHandle, title: String, body: String) {
+    if title.trim().is_empty() && body.trim().is_empty() {
+        return;
+    }
+    hide_quick_note(app, true);
+    if let Some(main_win) = app.get_window("main") {
+        let main_win_clone = main_win.clone();
+        with_keep_webview(&main_win, move |wv| {
+            if let Ok(url) = wv.url() {
+                if url.contains("accounts.google.com") {
+                    show_and_focus_window(&main_win_clone);
+                    return;
+                }
+            }
+            let script = build_submit_note_js(&title, &body);
+            let _ = wv.evaluate_script(&script);
         });
     }
 }
@@ -622,9 +1101,7 @@ fn main() {
                     if event.state() != ShortcutState::Pressed {
                         return;
                     }
-                    if shortcut == &toggle_shortcut() {
-                        toggle_window(app);
-                    } else if shortcut == &quick_note_shortcut() {
+                    if shortcut == &quick_note_shortcut() {
                         trigger_quick_note(app);
                     }
                 })
@@ -632,6 +1109,7 @@ fn main() {
         )
         .setup(move |app| {
             let data_dir = app.path().app_local_data_dir().ok();
+            let qn_data_dir = data_dir.clone().map(|d| d.join("quick-note"));
             let config_path = data_dir
                 .clone()
                 .unwrap_or_else(std::env::temp_dir)
@@ -664,12 +1142,9 @@ fn main() {
                 config_path,
             });
 
-            // Registra atalhos globais sem abortar caso já estejam ocupados no sistema
-            if let Err(err) = app.global_shortcut().register(toggle_shortcut()) {
-                eprintln!("Aviso: não foi possível registrar Ctrl+Alt+K: {err}");
-            }
+            // Registra Ctrl+K exclusivamente para abrir a janela rápida de nova nota
             if let Err(err) = app.global_shortcut().register(quick_note_shortcut()) {
-                eprintln!("Aviso: não foi possível registrar Ctrl+Alt+N: {err}");
+                eprintln!("Aviso: não foi possível registrar Ctrl+K: {err}");
             }
 
             // Cria janela nativa Tauri sem WebView Tauri (evita injeção de window.ipc / __TAURI_INTERNALS__
@@ -802,13 +1277,91 @@ fn main() {
                 *cell.borrow_mut() = Some(webview);
             });
 
+            // Mini-janela dedicada para anotação rápida (Ctrl+K) sem exibir a janela principal
+            let mut qn_builder = Window::builder(app, "quick-note")
+                .title("Nova nota rápida — Google Keep")
+                .inner_size(460.0, 290.0)
+                .resizable(false)
+                .decorations(false)
+                .always_on_top(true)
+                .skip_taskbar(true)
+                .center()
+                .visible(false)
+                .theme(Some(Theme::Dark));
+
+            if let Some(icon) = app.default_window_icon() {
+                qn_builder = qn_builder.icon(icon.clone())?;
+            }
+
+            let qn_window = qn_builder.build()?;
+
+            let mut qn_web_context = wry::WebContext::new(qn_data_dir);
+            let ipc_app = app.handle().clone();
+            let qn_webview = {
+                let mut builder = wry::WebViewBuilder::new_with_web_context(&mut qn_web_context)
+                    .with_background_color((0x20, 0x21, 0x24, 0xff))
+                    .with_clipboard(true)
+                    .with_html(QUICK_NOTE_HTML)
+                    .with_ipc_handler(move |req| {
+                        if let Ok(msg) = serde_json::from_str::<QuickNoteIpc>(req.body()) {
+                            let app_handle = ipc_app.clone();
+                            let _ = ipc_app.run_on_main_thread(move || match msg {
+                                QuickNoteIpc::Submit { title, body } => {
+                                    submit_quick_note_to_keep(&app_handle, title, body);
+                                }
+                                QuickNoteIpc::Close => {
+                                    hide_quick_note(&app_handle, true);
+                                }
+                                QuickNoteIpc::OpenMain => {
+                                    hide_quick_note(&app_handle, false);
+                                    if let Some(main_win) = app_handle.get_window("main") {
+                                        show_and_focus_window(&main_win);
+                                    }
+                                }
+                                QuickNoteIpc::Drag => {
+                                    if let Some(qn_win) = app_handle.get_window("quick-note") {
+                                        let _ = qn_win.start_dragging();
+                                    }
+                                }
+                            });
+                        }
+                    });
+
+                #[cfg(target_os = "windows")]
+                {
+                    use wry::WebViewBuilderExtWindows;
+                    builder = builder.with_theme(wry::Theme::Dark);
+                }
+
+                #[cfg(target_os = "linux")]
+                {
+                    use wry::WebViewBuilderExtUnix;
+                    let vbox = qn_window.default_vbox()?;
+                    let wv = builder.build_gtk(&vbox)?;
+                    let _ = wv.set_visible(true);
+                    wv
+                }
+
+                #[cfg(not(target_os = "linux"))]
+                {
+                    builder.build(&qn_window)?
+                }
+            };
+
+            QUICK_NOTE_CONTEXT.with(|cell| {
+                *cell.borrow_mut() = Some(qn_web_context);
+            });
+            QUICK_NOTE_WEBVIEW.with(|cell| {
+                *cell.borrow_mut() = Some(qn_webview);
+            });
+
             // Cria menu da bandeja do sistema (System Tray)
             let open_item =
-                MenuItem::with_id(app, "open", "Abrir / Ocultar (Ctrl+Alt+K)", true, None::<&str>)?;
+                MenuItem::with_id(app, "open", "Abrir / Ocultar Keep", true, None::<&str>)?;
             let quick_note_item = MenuItem::with_id(
                 app,
                 "quick_note",
-                "Nova nota rápida (Ctrl+Alt+N)",
+                "Nova nota rápida (Ctrl+K)",
                 true,
                 None::<&str>,
             )?;
@@ -989,45 +1542,58 @@ fn main() {
 
             Ok(())
         })
-        .on_window_event(|window, event| match event {
-            WindowEvent::Resized(size) => {
-                if !window.is_minimized().unwrap_or(false)
-                    && window.is_visible().unwrap_or(false)
-                    && size.width >= 320
-                    && size.height >= 240
-                {
-                    let state = window.app_handle().state::<AppState>();
-                    if let Ok(mut cfg) = state.config.lock() {
-                        cfg.width = Some(size.width);
-                        cfg.height = Some(size.height);
-                    };
-                }
-            }
-            WindowEvent::Moved(pos) => {
-                if !window.is_minimized().unwrap_or(false)
-                    && window.is_visible().unwrap_or(false)
-                    && pos.x > -10000
-                    && pos.y > -10000
-                {
-                    let state = window.app_handle().state::<AppState>();
-                    if let Ok(mut cfg) = state.config.lock() {
-                        cfg.x = Some(pos.x);
-                        cfg.y = Some(pos.y);
-                    };
-                }
-            }
-            WindowEvent::Focused(false) => {
-                save_state_config(window.app_handle());
-            }
-            // Oculta na bandeja quando disponível; caso contrário fecha normalmente
-            WindowEvent::CloseRequested { api, .. } => {
-                save_state_config(window.app_handle());
-                if TRAY_AVAILABLE.load(Ordering::Relaxed) {
-                    let _ = window.hide();
+        .on_window_event(|window, event| {
+            if window.label() == "quick-note" {
+                if let WindowEvent::CloseRequested { api, .. } = event {
+                    hide_quick_note(window.app_handle(), true);
                     api.prevent_close();
                 }
+                return;
             }
-            _ => {}
+            if window.label() != "main" {
+                return;
+            }
+
+            match event {
+                WindowEvent::Resized(size) => {
+                    if !window.is_minimized().unwrap_or(false)
+                        && window.is_visible().unwrap_or(false)
+                        && size.width >= 320
+                        && size.height >= 240
+                    {
+                        let state = window.app_handle().state::<AppState>();
+                        if let Ok(mut cfg) = state.config.lock() {
+                            cfg.width = Some(size.width);
+                            cfg.height = Some(size.height);
+                        };
+                    }
+                }
+                WindowEvent::Moved(pos) => {
+                    if !window.is_minimized().unwrap_or(false)
+                        && window.is_visible().unwrap_or(false)
+                        && pos.x > -10000
+                        && pos.y > -10000
+                    {
+                        let state = window.app_handle().state::<AppState>();
+                        if let Ok(mut cfg) = state.config.lock() {
+                            cfg.x = Some(pos.x);
+                            cfg.y = Some(pos.y);
+                        };
+                    }
+                }
+                WindowEvent::Focused(false) => {
+                    save_state_config(window.app_handle());
+                }
+                // Oculta na bandeja quando disponível; caso contrário fecha normalmente
+                WindowEvent::CloseRequested { api, .. } => {
+                    save_state_config(window.app_handle());
+                    if TRAY_AVAILABLE.load(Ordering::Relaxed) {
+                        let _ = window.hide();
+                        api.prevent_close();
+                    }
+                }
+                _ => {}
+            }
         })
         .run(tauri::generate_context!())
         .expect("Erro ao executar aplicação Tauri");

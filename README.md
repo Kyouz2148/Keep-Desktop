@@ -31,7 +31,7 @@ O objetivo do **Google Keep Desktop** é oferecer uma janela dedicada, discreta,
 
 ---
 
-## Recursos atuais (`v0.2.1`)
+## Recursos atuais (`v0.2.3`)
 
 <div align="center">
   <img src="docs/tray-menu.jpg" alt="Menu da bandeja do sistema (System Tray) do Google Keep Desktop" width="460" />
@@ -42,11 +42,10 @@ O objetivo do **Google Keep Desktop** é oferecer uma janela dedicada, discreta,
 - **Bandeja do sistema (System Tray)**:
   - Clique esquerdo no ícone alterna entre mostrar e ocultar a janela.
   - Fechar no `X` apenas oculta o app na bandeja, mantendo sua sessão do Google ativa e abertura instantânea.
-- **Atalhos globais (funcionam em qualquer tela do Windows)**:
-  - `Ctrl + Alt + K` — Abre ou oculta a janela do Google Keep.
-  - `Ctrl + Alt + N` — Mostra a janela e foca direto no campo **"Criar uma nota..."** para anotação rápida.
-- **Iniciar com o Windows**:
-  - Alternável pelo menu da bandeja (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`), iniciando minimizado na bandeja (`--minimized`).
+- **Atalho global de nota rápida (`Ctrl + K`)**:
+  - `Ctrl + K` — Abre **apenas uma mini-janela flutuante** para criar uma nova nota de qualquer tela, sem abrir a janela completa do Google Keep. Salva e sincroniza silenciosamente em segundo plano (`Ctrl + Enter` salva, `Esc` fecha).
+- **Iniciar com o sistema**:
+  - Alternável pelo menu da bandeja (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run` no Windows ou `~/.config/autostart/` no Linux), iniciando minimizado na bandeja (`--minimized`).
 - **Sempre no topo (*Always on Top*)**:
   - Mantém o Keep flutuando sobre outros aplicativos quando necessário.
 - **Persistência automática (`desktop-config.json`)**:
@@ -54,9 +53,9 @@ O objetivo do **Google Keep Desktop** é oferecer uma janela dedicada, discreta,
 - **Controle de zoom persistente**:
   - Ajuste direto com `Ctrl + +`, `Ctrl + -`, `Ctrl + 0`, `Ctrl + Scroll do mouse` ou pelo submenu **Zoom** na bandeja (`+10%`, `-10%`, `Restaurar 100%`), salvo e reaplicado automaticamente.
 - **Links externos no navegador padrão**:
-  - Links clicados dentro das notas (inclusive redirecionamentos `google.com/url?q=...`) abrem no seu navegador padrão do Windows via `ShellExecuteW`, mantendo dentro do app apenas o Google Keep e telas de autenticação Google.
+  - Links clicados dentro das notas (inclusive redirecionamentos `google.com/url?q=...`) abrem no seu navegador padrão (`ShellExecuteW` no Windows / `xdg-open` no Linux), mantendo dentro do app apenas o Google Keep e telas de autenticação Google.
 - **Barra de título escura nativa**:
-  - Tema escuro na moldura da janela e no WebView2 para combinar com o modo escuro do Keep.
+  - Tema escuro na moldura da janela e na WebView para combinar com o modo escuro do Keep.
 - **DevTools integrado**:
   - Acesso direto pelo menu da bandeja (*Abrir DevTools (F12)*) para inspeção e depuração.
 
@@ -66,9 +65,9 @@ O objetivo do **Google Keep Desktop** é oferecer uma janela dedicada, discreta,
 
 ### Stack utilizada
 
-- **Rust + Tauri v2 (`tauri`)**: gerencia ciclo de vida da aplicação, janela nativa, bandeja do sistema (*System Tray*), atalhos globais (`tauri-plugin-global-shortcut`) e geração do instalador NSIS para Windows.
-- **WebView pura com `wry` (`WebView2`)**: renderiza diretamente `https://keep.google.com` usando o Edge WebView2 nativo do Windows.
-- **APIs Win32 (`windows`, `webview2-com`, `winreg`)**: controle fino de perfil/privacidade e zoom do WebView2, abertura de URLs externas com `ShellExecuteW` e gerenciamento do registro de inicialização automática no Windows.
+- **Rust + Tauri v2 (`tauri`)**: gerencia ciclo de vida da aplicação, janela nativa, bandeja do sistema (*System Tray*), atalho global (`tauri-plugin-global-shortcut`) e empacotamento (NSIS no Windows; `.deb` e `.flatpak` no Linux).
+- **WebView pura com `wry` (`WebView2` / `WebKitGTK`)**: renderiza diretamente `https://keep.google.com` sem injetar `window.ipc` na página do Google Keep, além de manter uma mini-janela isolada para captura rápida de notas em `Ctrl + K`.
+- **APIs Win32 / GTK**: controle fino de perfil/privacidade e zoom no WebView2/WebKitGTK, abertura de URLs externas e gerenciamento do autostart no sistema.
 
 ### O principal desafio técnico (e por que a arquitetura é assim)
 
@@ -82,9 +81,9 @@ Ao tentar carregar o Google Keep dentro de uma `WebviewWindow` padrão do Tauri,
 
 **Como resolvemos em [`src-tauri/src/main.rs`](src-tauri/src/main.rs):**
 - Em vez de declarar janelas em `tauri.conf.json`, a janela nativa é criada diretamente com `tauri::Window::builder` (feature `unstable` do Tauri v2) sem `WebviewWindow`.
-- Sobre essa janela, anexamos uma instância pura de `wry::WebViewBuilder` (sem `ipc_handler` e sem `custom_protocol`), armazenada em `thread_local!` na thread principal.
+- Sobre a janela principal, anexamos uma instância pura de `wry::WebViewBuilder` (sem `ipc_handler` e sem `custom_protocol`), armazenada em `thread_local!` na thread principal.
 - Antes de navegar para `https://keep.google.com`, configuramos o perfil do WebView2 no Windows com `COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_NONE`, passamos flags de compatibilidade (`--disable-features=...ServiceWorkerStaticRouter,ThirdPartyStoragePartitioning,TrackingProtection3pcd`) e limpamos Service Workers antigos sem apagar cookies/autenticação.
-- Scripts pontuais (como a abertura da nota rápida em `Ctrl + Alt + N`) são executados sob demanda via `evaluate_script` dentro de IIFEs isoladas `(function(){ ... })()`, sem criar propriedades globais em `window`.
+- A mini-janela de nota rápida (`Ctrl + K`) roda em uma segunda janela/WebView isolada com UI própria e envia título/conteúdo via IPC para o backend Rust, que injeta a nota silenciosamente na WebView oculta do Keep via `evaluate_script` dentro de uma IIFE isolada, sem abrir a janela principal.
 
 ---
 
@@ -97,7 +96,7 @@ Ao tentar carregar o Google Keep dentro de uma `WebviewWindow` padrão do Tauri,
 │   ├── preview.jpg         # Captura ilustrativa da janela principal
 │   └── tray-menu.jpg       # Captura ilustrativa do menu na bandeja do sistema
 ├── packaging/flatpak/
-│   ├── com.kyouztech.keepdesktop.yml          # Manifesto Flatpak (GNOME Platform 47)
+│   ├── com.kyouztech.keepdesktop.yml          # Manifesto Flatpak (GNOME Platform 49)
 │   ├── com.kyouztech.keepdesktop.desktop      # Atalho Desktop XDG
 │   └── com.kyouztech.keepdesktop.metainfo.xml # Metadados AppStream
 ├── src/
