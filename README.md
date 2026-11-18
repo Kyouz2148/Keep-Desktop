@@ -31,7 +31,7 @@ O objetivo do **Google Keep Desktop** é oferecer uma janela dedicada, discreta,
 
 ---
 
-## Recursos atuais (`v0.2.3`)
+## Recursos atuais (`v0.2.4`)
 
 <div align="center">
   <img src="docs/tray-menu.jpg" alt="Menu da bandeja do sistema (System Tray) do Google Keep Desktop" width="460" />
@@ -43,21 +43,24 @@ O objetivo do **Google Keep Desktop** é oferecer uma janela dedicada, discreta,
   - Clique esquerdo no ícone alterna entre mostrar e ocultar a janela.
   - Fechar no `X` apenas oculta o app na bandeja, mantendo sua sessão do Google ativa e abertura instantânea.
 - **Atalho global de nota rápida (`Ctrl + K`)**:
-  - `Ctrl + K` — Abre **apenas uma mini-janela flutuante** para criar uma nova nota de qualquer tela, sem abrir a janela completa do Google Keep. Salva e sincroniza silenciosamente em segundo plano (`Ctrl + Enter` salva, `Esc` fecha).
+  - `Ctrl + K` — Abre **apenas uma mini-janela flutuante** (com cantos arredondados nativos no Windows 11, arrastável pelo cabeçalho) sem abrir a janela principal do Keep.
+  - Suporta **seletor de cor** (paleta oficial Keep), **modo checklist** interativo, **fixar no topo**, **marcadores (`#tag`)**, **recuperação de rascunho** caso fechada com `Esc`, auto-expansão de altura e feedback visual de envio (`Ctrl + Enter` salva, `Esc` fecha).
+- **Personalização visual e filtros na janela principal (submenu *Aparência*)**:
+  - **Temas**: *Padrão Keep*, *AMOLED (Preto puro)*, *Nord Escuro* e *Catppuccin Mocha*.
+  - **Scrollbars escuras e finas** nativas e **Modo Compacto / Foco** (oculta atalhos web extras do Google e recolhe a barra lateral em janelas estreitas).
+  - **Barra flutuante de filtros rápidos**: filtre notas visíveis por *Fixadas*, *Listas*, *Pendentes*, texto ou `#tags`, escolhendo entre *Destacar* ou *Isolar*.
 - **Iniciar com o sistema**:
   - Alternável pelo menu da bandeja (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run` no Windows ou `~/.config/autostart/` no Linux), iniciando minimizado na bandeja (`--minimized`).
 - **Sempre no topo (*Always on Top*)**:
   - Mantém o Keep flutuando sobre outros aplicativos quando necessário.
 - **Persistência automática (`desktop-config.json`)**:
-  - Lembra tamanho, posição (validada nos monitores conectados), estado de *Sempre no topo*, autostart e nível de zoom.
+  - Lembra tamanho, posição (validada nos monitores conectados), tema, modo compacto, barra de filtros, estado de *Sempre no topo*, autostart e nível de zoom.
 - **Controle de zoom persistente**:
   - Ajuste direto com `Ctrl + +`, `Ctrl + -`, `Ctrl + 0`, `Ctrl + Scroll do mouse` ou pelo submenu **Zoom** na bandeja (`+10%`, `-10%`, `Restaurar 100%`), salvo e reaplicado automaticamente.
 - **Links externos no navegador padrão**:
   - Links clicados dentro das notas (inclusive redirecionamentos `google.com/url?q=...`) abrem no seu navegador padrão (`ShellExecuteW` no Windows / `xdg-open` no Linux), mantendo dentro do app apenas o Google Keep e telas de autenticação Google.
-- **Barra de título escura nativa**:
-  - Tema escuro na moldura da janela e na WebView para combinar com o modo escuro do Keep.
-- **DevTools integrado**:
-  - Acesso direto pelo menu da bandeja (*Abrir DevTools (F12)*) para inspeção e depuração.
+- **Barra de título escura nativa e DevTools integrado**:
+  - Tema escuro na moldura e acesso rápido ao DevTools pelo menu da bandeja (*Abrir DevTools (F12)*).
 
 ---
 

@@ -44,6 +44,10 @@ const QUICK_NOTE_HTML: &str = r#"<!DOCTYPE html>
 <style>
   :root {
     color-scheme: dark;
+    --bg: #202124;
+    --surface: #252629;
+    --border: #3c4043;
+    --subtle-border: rgba(255, 255, 255, 0.08);
   }
   * {
     box-sizing: border-box;
@@ -53,7 +57,7 @@ const QUICK_NOTE_HTML: &str = r#"<!DOCTYPE html>
   html, body {
     width: 100%;
     height: 100%;
-    background: #202124;
+    background: var(--bg);
     color: #e8eaed;
     font-family: 'Segoe UI', system-ui, -apple-system, Roboto, sans-serif;
     overflow: hidden;
@@ -64,16 +68,21 @@ const QUICK_NOTE_HTML: &str = r#"<!DOCTYPE html>
     height: 100%;
     display: flex;
     flex-direction: column;
-    background: #202124;
-    border: 1px solid #3c4043;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    transition: background-color 0.18s ease, border-color 0.18s ease;
   }
   .header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 10px 14px;
-    border-bottom: 1px solid #2d2e30;
-    background: #252629;
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--subtle-border);
+    background: rgba(0, 0, 0, 0.16);
+    cursor: grab;
+  }
+  .header:active {
+    cursor: grabbing;
   }
   .brand {
     display: flex;
@@ -88,17 +97,39 @@ const QUICK_NOTE_HTML: &str = r#"<!DOCTYPE html>
     height: 10px;
     border-radius: 50%;
     background: #fbbc04;
-    box-shadow: 0 0 8px rgba(251, 188, 4, 0.45);
+    box-shadow: 0 0 8px rgba(251, 188, 4, 0.5);
   }
   .header-actions {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
   }
-  .link-btn {
-    border: 1px solid #3c4043;
+  .icon-btn {
+    width: 26px;
+    height: 26px;
+    border: 1px solid transparent;
     background: transparent;
     color: #9aa0a6;
+    border-radius: 6px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+  }
+  .icon-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: #e8eaed;
+  }
+  .icon-btn.active {
+    background: rgba(251, 188, 4, 0.18);
+    color: #fbbc04;
+    border-color: rgba(251, 188, 4, 0.45);
+  }
+  .link-btn {
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: transparent;
+    color: #bdc1c6;
     font-size: 11px;
     padding: 3px 8px;
     border-radius: 5px;
@@ -106,34 +137,24 @@ const QUICK_NOTE_HTML: &str = r#"<!DOCTYPE html>
     transition: background 0.15s, color 0.15s;
   }
   .link-btn:hover {
-    background: #303134;
-    color: #e8eaed;
-  }
-  .close-btn {
-    width: 24px;
-    height: 24px;
-    border: none;
-    background: transparent;
-    color: #9aa0a6;
-    font-size: 18px;
-    line-height: 1;
-    border-radius: 5px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .close-btn:hover {
-    background: #35363a;
-    color: #e8eaed;
+    background: rgba(255, 255, 255, 0.08);
+    color: #fff;
   }
   .fields {
     flex: 1;
     display: flex;
     flex-direction: column;
-    padding: 12px 16px 8px;
-    gap: 8px;
+    padding: 10px 14px 6px;
+    gap: 6px;
     min-height: 0;
+    overflow-y: auto;
+  }
+  .fields::-webkit-scrollbar {
+    width: 6px;
+  }
+  .fields::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18);
+    border-radius: 999px;
   }
   #note-title {
     width: 100%;
@@ -144,14 +165,16 @@ const QUICK_NOTE_HTML: &str = r#"<!DOCTYPE html>
     font-size: 16px;
     font-weight: 600;
     font-family: inherit;
-    padding: 4px 0;
+    padding: 3px 0;
+    user-select: text;
   }
   #note-title::placeholder {
-    color: #80868b;
+    color: rgba(232, 234, 237, 0.45);
   }
   #note-body {
     flex: 1;
     width: 100%;
+    min-height: 92px;
     border: none;
     outline: none;
     resize: none;
@@ -160,43 +183,206 @@ const QUICK_NOTE_HTML: &str = r#"<!DOCTYPE html>
     font-size: 14px;
     line-height: 1.5;
     font-family: inherit;
-    padding: 4px 0;
+    padding: 2px 0;
+    user-select: text;
   }
   #note-body::placeholder {
-    color: #80868b;
+    color: rgba(232, 234, 237, 0.45);
+  }
+  .checklist-wrap {
+    display: none;
+    flex-direction: column;
+    gap: 4px;
+    flex: 1;
+  }
+  .checklist-wrap.visible {
+    display: flex;
+  }
+  .check-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 2px 0;
+  }
+  .check-row input[type="checkbox"] {
+    width: 15px;
+    height: 15px;
+    accent-color: #fbbc04;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .check-row input[type="text"] {
+    flex: 1;
+    border: none;
+    outline: none;
+    background: transparent;
+    color: #e8eaed;
+    font-size: 14px;
+    font-family: inherit;
+    user-select: text;
+  }
+  .check-row input[type="text"].checked {
+    text-decoration: line-through;
+    opacity: 0.6;
+  }
+  .check-del {
+    border: none;
+    background: transparent;
+    color: rgba(232, 234, 237, 0.45);
+    cursor: pointer;
+    font-size: 15px;
+    padding: 0 4px;
+    border-radius: 4px;
+  }
+  .check-del:hover {
+    color: #e8eaed;
+    background: rgba(255, 255, 255, 0.08);
+  }
+  .add-item-btn {
+    align-self: flex-start;
+    margin-top: 2px;
+    border: none;
+    background: transparent;
+    color: rgba(232, 234, 237, 0.65);
+    font-size: 12px;
+    cursor: pointer;
+    padding: 3px 4px;
+    border-radius: 4px;
+  }
+  .add-item-btn:hover {
+    color: #fbbc04;
+    background: rgba(255, 255, 255, 0.06);
+  }
+  .tags-bar {
+    display: none;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 14px 6px;
+  }
+  .tags-bar.visible {
+    display: flex;
+  }
+  .tag-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    color: #e8eaed;
+    font-size: 11px;
+    padding: 2px 7px;
+    border-radius: 999px;
+  }
+  .tag-chip button {
+    border: none;
+    background: transparent;
+    color: #bdc1c6;
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 1;
+  }
+  #tag-input {
+    flex: 1;
+    min-width: 110px;
+    border: none;
+    outline: none;
+    background: transparent;
+    color: #e8eaed;
+    font-size: 12px;
+    font-family: inherit;
+    user-select: text;
+  }
+  #tag-input::placeholder {
+    color: rgba(232, 234, 237, 0.45);
+  }
+  .palette-bar {
+    display: none;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    border-top: 1px solid var(--subtle-border);
+    background: rgba(0, 0, 0, 0.12);
+    overflow-x: auto;
+  }
+  .palette-bar.visible {
+    display: flex;
+  }
+  .swatch {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    border: 2px solid rgba(255, 255, 255, 0.22);
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: transform 0.12s, border-color 0.12s;
+  }
+  .swatch:hover {
+    transform: scale(1.14);
+  }
+  .swatch.active {
+    border-color: #fbbc04;
+    transform: scale(1.12);
   }
   .footer {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 10px 14px;
-    border-top: 1px solid #2d2e30;
-    background: #252629;
+    padding: 8px 12px;
+    border-top: 1px solid var(--subtle-border);
+    background: rgba(0, 0, 0, 0.18);
+    gap: 8px;
+  }
+  .tools {
+    display: flex;
+    align-items: center;
+    gap: 3px;
   }
   .hint {
     font-size: 11px;
-    color: #9aa0a6;
+    color: rgba(232, 234, 237, 0.65);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .hint.warn {
     color: #fbbc04;
   }
+  .hint.ok {
+    color: #81c995;
+    font-weight: 600;
+  }
+  .draft-btn {
+    display: none;
+    border: 1px solid rgba(251, 188, 4, 0.45);
+    background: rgba(251, 188, 4, 0.12);
+    color: #fbbc04;
+    font-size: 11px;
+    padding: 2px 7px;
+    border-radius: 5px;
+    cursor: pointer;
+  }
+  .draft-btn.visible {
+    display: inline-block;
+  }
   .actions {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
+    flex-shrink: 0;
   }
   .btn-ghost {
-    border: 1px solid #3c4043;
+    border: 1px solid rgba(255, 255, 255, 0.16);
     background: transparent;
     color: #e8eaed;
     font-size: 12px;
     font-weight: 500;
-    padding: 6px 12px;
+    padding: 5px 10px;
     border-radius: 6px;
     cursor: pointer;
   }
   .btn-ghost:hover {
-    background: #303134;
+    background: rgba(255, 255, 255, 0.08);
   }
   .btn-primary {
     border: none;
@@ -204,7 +390,7 @@ const QUICK_NOTE_HTML: &str = r#"<!DOCTYPE html>
     color: #202124;
     font-size: 12px;
     font-weight: 600;
-    padding: 6px 14px;
+    padding: 5px 12px;
     border-radius: 6px;
     cursor: pointer;
   }
@@ -214,35 +400,110 @@ const QUICK_NOTE_HTML: &str = r#"<!DOCTYPE html>
 </style>
 </head>
 <body>
-  <div class="card">
-    <div class="header">
+  <div class="card" id="card">
+    <div class="header" id="drag-header" title="Arraste para mover · Clique duplo para centralizar">
       <div class="brand">
         <span class="brand-dot"></span>
         <span>Nova nota rápida</span>
       </div>
       <div class="header-actions">
+        <button id="btn-pin" class="icon-btn" type="button" title="Fixar nota no topo">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 17v5M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16h14v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/>
+          </svg>
+        </button>
         <button id="btn-open-main" class="link-btn" type="button" title="Abrir janela completa do Keep">Abrir Keep</button>
-        <button id="btn-close" class="close-btn" type="button" title="Fechar (Esc)">&times;</button>
+        <button id="btn-close" class="icon-btn" type="button" title="Fechar (Esc)" style="font-size:18px">&times;</button>
       </div>
     </div>
-    <div class="fields">
+
+    <div class="fields" id="fields-wrap">
       <input id="note-title" type="text" placeholder="Título" autocomplete="off" />
       <textarea id="note-body" placeholder="Criar uma nota..."></textarea>
+      <div id="checklist-wrap" class="checklist-wrap"></div>
     </div>
+
+    <div id="tags-bar" class="tags-bar">
+      <span id="tags-chips"></span>
+      <input id="tag-input" type="text" placeholder="Adicionar marcador (Enter)..." autocomplete="off" />
+    </div>
+
+    <div id="palette-bar" class="palette-bar"></div>
+
     <div class="footer">
-      <span id="hint-text" class="hint">Ctrl+Enter salvar &middot; Esc fechar</span>
+      <div class="tools">
+        <button id="btn-checklist" class="icon-btn" type="button" title="Alternar modo checklist">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="5" width="6" height="6" rx="1"/><path d="m4.5 8 1.2 1.2L8 6.8"/><line x1="13" y1="8" x2="21" y2="8"/>
+            <rect x="3" y="14" width="6" height="6" rx="1"/><line x1="13" y1="17" x2="21" y2="17"/>
+          </svg>
+        </button>
+        <button id="btn-palette" class="icon-btn" type="button" title="Cor da nota">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/>
+            <circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/>
+            <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/>
+          </svg>
+        </button>
+        <button id="btn-tags" class="icon-btn" type="button" title="Marcadores">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 2H2v10l9.29 9.29c.94.94 2.48.94 3.42 0l6.58-6.58c.94-.94.94-2.48 0-3.42L12 2Z"/>
+            <circle cx="7" cy="7" r="1"/>
+          </svg>
+        </button>
+        <button id="btn-restore-draft" class="draft-btn" type="button" title="Restaurar último rascunho">Rascunho</button>
+      </div>
+      <span id="hint-text" class="hint">Ctrl+Enter salvar</span>
       <div class="actions">
         <button id="btn-cancel" class="btn-ghost" type="button">Cancelar</button>
-        <button id="btn-save" class="btn-primary" type="button">Salvar nota</button>
+        <button id="btn-save" class="btn-primary" type="button">Salvar</button>
       </div>
     </div>
   </div>
+
   <script>
     (function () {
-      var DEFAULT_HINT = 'Ctrl+Enter salvar \u00b7 Esc fechar';
+      var COLORS = [
+        { id: 'default', bg: '#202124', name: 'Padrão', labels: [] },
+        { id: 'coral', bg: '#77172e', name: 'Coral', labels: ['Coral', 'Vermelho', 'Red'] },
+        { id: 'peach', bg: '#692b17', name: 'Pêssego', labels: ['Pêssego', 'Peach', 'Laranja', 'Orange'] },
+        { id: 'sand', bg: '#7c4a03', name: 'Areia', labels: ['Areia', 'Sand', 'Amarelo', 'Yellow'] },
+        { id: 'mint', bg: '#264d3b', name: 'Menta', labels: ['Menta', 'Mint', 'Verde', 'Green'] },
+        { id: 'sage', bg: '#0c625d', name: 'Sálvia', labels: ['Sálvia', 'Sage', 'Azul-petróleo', 'Teal'] },
+        { id: 'fog', bg: '#256377', name: 'Névoa', labels: ['Névoa', 'Fog', 'Azul', 'Blue'] },
+        { id: 'storm', bg: '#284255', name: 'Crepúsculo', labels: ['Crepúsculo', 'Storm', 'Azul-escuro', 'Dark blue'] },
+        { id: 'blossom', bg: '#472e5b', name: 'Flor', labels: ['Flor', 'Blossom', 'Roxo', 'Purple'] },
+        { id: 'clay', bg: '#6c394f', name: 'Argila', labels: ['Argila', 'Clay', 'Rosa', 'Pink'] },
+        { id: 'chalk', bg: '#4b443a', name: 'Giz', labels: ['Giz', 'Chalk', 'Marrom', 'Brown', 'Cinza', 'Gray'] }
+      ];
+
+      var DRAFT_KEY = 'kd_quick_note_discarded_v1';
+      var DEFAULT_HINT = 'Ctrl+Enter salvar';
+
       var titleEl = document.getElementById('note-title');
       var bodyEl = document.getElementById('note-body');
+      var checklistWrap = document.getElementById('checklist-wrap');
+      var paletteBar = document.getElementById('palette-bar');
+      var tagsBar = document.getElementById('tags-bar');
+      var tagsChips = document.getElementById('tags-chips');
+      var tagInput = document.getElementById('tag-input');
       var hintEl = document.getElementById('hint-text');
+      var btnPin = document.getElementById('btn-pin');
+      var btnChecklist = document.getElementById('btn-checklist');
+      var btnPalette = document.getElementById('btn-palette');
+      var btnTags = document.getElementById('btn-tags');
+      var btnRestore = document.getElementById('btn-restore-draft');
+
+      var state = {
+        colorId: 'default',
+        pinned: false,
+        isChecklist: false,
+        items: [{ text: '', checked: false }],
+        tags: [],
+        paletteOpen: false,
+        tagsOpen: false,
+        saving: false
+      };
 
       function send(payload) {
         if (window.ipc && typeof window.ipc.postMessage === 'function') {
@@ -250,45 +511,364 @@ const QUICK_NOTE_HTML: &str = r#"<!DOCTYPE html>
         }
       }
 
+      function applyColor(colorId) {
+        var found = COLORS.find(function (c) { return c.id === colorId; }) || COLORS[0];
+        state.colorId = found.id;
+        document.documentElement.style.setProperty('--bg', found.bg);
+        var swatches = paletteBar.querySelectorAll('.swatch');
+        swatches.forEach(function (sw) {
+          sw.classList.toggle('active', sw.dataset.id === found.id);
+        });
+      }
+
+      COLORS.forEach(function (c) {
+        var sw = document.createElement('button');
+        sw.type = 'button';
+        sw.className = 'swatch' + (c.id === 'default' ? ' active' : '');
+        sw.style.backgroundColor = c.bg;
+        sw.title = c.name;
+        sw.dataset.id = c.id;
+        sw.addEventListener('click', function () {
+          applyColor(c.id);
+        });
+        paletteBar.appendChild(sw);
+      });
+
+      function requestResize() {
+        var extra = 0;
+        if (state.paletteOpen) extra += 32;
+        if (state.tagsOpen) extra += 34;
+        if (state.isChecklist) {
+          extra += Math.min(Math.max(0, state.items.length - 3) * 28, 120);
+        } else {
+          var lines = (bodyEl.value.match(/\n/g) || []).length;
+          extra += Math.min(Math.max(0, lines - 3) * 20, 110);
+        }
+        var targetH = Math.min(480, Math.max(330, 330 + extra));
+        send({ action: 'resize', height: targetH });
+      }
+
+      function renderTags() {
+        tagsChips.innerHTML = '';
+        state.tags.forEach(function (tag, idx) {
+          var chip = document.createElement('span');
+          chip.className = 'tag-chip';
+          chip.textContent = '#' + tag + ' ';
+          var rm = document.createElement('button');
+          rm.type = 'button';
+          rm.textContent = '\u00d7';
+          rm.addEventListener('click', function () {
+            state.tags.splice(idx, 1);
+            renderTags();
+          });
+          chip.appendChild(rm);
+          tagsChips.appendChild(chip);
+        });
+      }
+
+      function addTagFromInput() {
+        var raw = tagInput.value.replace(/^#+/, '').trim();
+        if (!raw) return;
+        raw.split(',').forEach(function (part) {
+          var clean = part.replace(/^#+/, '').trim();
+          if (clean && state.tags.indexOf(clean) === -1) {
+            state.tags.push(clean);
+          }
+        });
+        tagInput.value = '';
+        renderTags();
+      }
+
+      function renderChecklist(focusIndex) {
+        checklistWrap.innerHTML = '';
+        if (!state.items.length) {
+          state.items.push({ text: '', checked: false });
+        }
+        state.items.forEach(function (item, idx) {
+          var row = document.createElement('div');
+          row.className = 'check-row';
+
+          var cb = document.createElement('input');
+          cb.type = 'checkbox';
+          cb.checked = !!item.checked;
+          cb.addEventListener('change', function () {
+            item.checked = cb.checked;
+            txt.classList.toggle('checked', item.checked);
+          });
+
+          var txt = document.createElement('input');
+          txt.type = 'text';
+          txt.placeholder = 'Item da lista...';
+          txt.value = item.text || '';
+          if (item.checked) txt.classList.add('checked');
+          txt.addEventListener('input', function () {
+            item.text = txt.value;
+          });
+          txt.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
+              e.preventDefault();
+              state.items.splice(idx + 1, 0, { text: '', checked: false });
+              renderChecklist(idx + 1);
+              requestResize();
+            } else if (e.key === 'Backspace' && !txt.value && state.items.length > 1) {
+              e.preventDefault();
+              state.items.splice(idx, 1);
+              renderChecklist(Math.max(0, idx - 1));
+              requestResize();
+            }
+          });
+
+          var del = document.createElement('button');
+          del.type = 'button';
+          del.className = 'check-del';
+          del.textContent = '\u00d7';
+          del.addEventListener('click', function () {
+            if (state.items.length > 1) {
+              state.items.splice(idx, 1);
+            } else {
+              state.items[0] = { text: '', checked: false };
+            }
+            renderChecklist(Math.max(0, idx - 1));
+            requestResize();
+          });
+
+          row.appendChild(cb);
+          row.appendChild(txt);
+          row.appendChild(del);
+          checklistWrap.appendChild(row);
+        });
+
+        var addBtn = document.createElement('button');
+        addBtn.type = 'button';
+        addBtn.className = 'add-item-btn';
+        addBtn.textContent = '+ Novo item';
+        addBtn.addEventListener('click', function () {
+          state.items.push({ text: '', checked: false });
+          renderChecklist(state.items.length - 1);
+          requestResize();
+        });
+        checklistWrap.appendChild(addBtn);
+
+        if (typeof focusIndex === 'number') {
+          var inputs = checklistWrap.querySelectorAll('input[type="text"]');
+          if (inputs[focusIndex]) {
+            setTimeout(function () { inputs[focusIndex].focus(); }, 10);
+          }
+        }
+      }
+
+      function setChecklistMode(enabled, skipConvert) {
+        state.isChecklist = enabled;
+        btnChecklist.classList.toggle('active', enabled);
+        if (enabled) {
+          if (!skipConvert) {
+            var lines = bodyEl.value.split(/\r?\n/).map(function (l) {
+              return l.replace(/^\s*[-*]\s*(\[[ xX]\]\s*)?/, '').trim();
+            }).filter(Boolean);
+            state.items = lines.length
+              ? lines.map(function (t) { return { text: t, checked: false }; })
+              : [{ text: '', checked: false }];
+          }
+          bodyEl.style.display = 'none';
+          checklistWrap.classList.add('visible');
+          renderChecklist(state.items.length - 1);
+        } else {
+          if (!skipConvert) {
+            bodyEl.value = state.items.map(function (i) { return i.text; }).filter(Boolean).join('\n');
+          }
+          checklistWrap.classList.remove('visible');
+          bodyEl.style.display = '';
+          setTimeout(function () { bodyEl.focus(); }, 10);
+        }
+        requestResize();
+      }
+
+      function hasContent() {
+        if (titleEl.value.trim()) return true;
+        if (!state.isChecklist && bodyEl.value.trim()) return true;
+        if (state.isChecklist && state.items.some(function (i) { return (i.text || '').trim(); })) return true;
+        return false;
+      }
+
+      function saveDiscardedDraftIfAny() {
+        try {
+          if (hasContent()) {
+            localStorage.setItem(DRAFT_KEY, JSON.stringify({
+              title: titleEl.value,
+              body: bodyEl.value,
+              isChecklist: state.isChecklist,
+              items: state.items,
+              colorId: state.colorId,
+              pinned: state.pinned,
+              tags: state.tags
+            }));
+          }
+        } catch (_) {}
+      }
+
+      function refreshDraftBadge() {
+        try {
+          var raw = localStorage.getItem(DRAFT_KEY);
+          btnRestore.classList.toggle('visible', !!raw);
+        } catch (_) {
+          btnRestore.classList.remove('visible');
+        }
+      }
+
       window.focusQuickNote = function () {
+        state.saving = false;
         hintEl.textContent = DEFAULT_HINT;
-        hintEl.classList.remove('warn');
+        hintEl.className = 'hint';
+        refreshDraftBadge();
+        requestResize();
         setTimeout(function () {
-          bodyEl.focus();
+          if (state.isChecklist) {
+            var first = checklistWrap.querySelector('input[type="text"]');
+            if (first) first.focus();
+          } else {
+            bodyEl.focus();
+          }
         }, 20);
       };
 
       window.resetQuickNote = function () {
+        state.saving = false;
         titleEl.value = '';
         bodyEl.value = '';
+        tagInput.value = '';
+        state.pinned = false;
+        state.tags = [];
+        state.items = [{ text: '', checked: false }];
+        state.paletteOpen = false;
+        state.tagsOpen = false;
+        btnPin.classList.remove('active');
+        btnPalette.classList.remove('active');
+        btnTags.classList.remove('active');
+        paletteBar.classList.remove('visible');
+        tagsBar.classList.remove('visible');
+        renderTags();
+        applyColor('default');
+        setChecklistMode(false, true);
         hintEl.textContent = DEFAULT_HINT;
-        hintEl.classList.remove('warn');
+        hintEl.className = 'hint';
+        refreshDraftBadge();
       };
 
+      btnRestore.addEventListener('click', function () {
+        try {
+          var raw = localStorage.getItem(DRAFT_KEY);
+          if (!raw) return;
+          var d = JSON.parse(raw);
+          titleEl.value = d.title || '';
+          bodyEl.value = d.body || '';
+          state.pinned = !!d.pinned;
+          btnPin.classList.toggle('active', state.pinned);
+          state.tags = Array.isArray(d.tags) ? d.tags : [];
+          renderTags();
+          if (state.tags.length) {
+            state.tagsOpen = true;
+            btnTags.classList.add('active');
+            tagsBar.classList.add('visible');
+          }
+          applyColor(d.colorId || 'default');
+          if (d.isChecklist) {
+            state.items = Array.isArray(d.items) && d.items.length ? d.items : [{ text: '', checked: false }];
+            setChecklistMode(true, true);
+          } else {
+            setChecklistMode(false, true);
+          }
+          localStorage.removeItem(DRAFT_KEY);
+          refreshDraftBadge();
+          requestResize();
+        } catch (_) {}
+      });
+
       function submitNote() {
-        var title = titleEl.value.trim();
-        var body = bodyEl.value.trim();
-        if (!title && !body) {
+        if (state.saving) return;
+        addTagFromInput();
+        if (!hasContent()) {
           hintEl.textContent = 'Digite algo antes de salvar';
-          hintEl.classList.add('warn');
-          bodyEl.focus();
+          hintEl.className = 'hint warn';
+          if (state.isChecklist) {
+            var first = checklistWrap.querySelector('input[type="text"]');
+            if (first) first.focus();
+          } else {
+            bodyEl.focus();
+          }
           return;
         }
-        send({
-          action: 'submit',
-          title: titleEl.value,
-          body: bodyEl.value
-        });
+        state.saving = true;
+        hintEl.textContent = 'Enviando para o Keep \u2713';
+        hintEl.className = 'hint ok';
+        try { localStorage.removeItem(DRAFT_KEY); } catch (_) {}
+
+        var colObj = COLORS.find(function (c) { return c.id === state.colorId; }) || COLORS[0];
+        var cleanItems = state.items
+          .map(function (i) { return { text: (i.text || '').trim(), checked: !!i.checked }; })
+          .filter(function (i) { return i.text.length > 0; });
+
+        setTimeout(function () {
+          send({
+            action: 'submit',
+            title: titleEl.value,
+            body: bodyEl.value,
+            is_checklist: state.isChecklist && cleanItems.length > 0,
+            items: cleanItems,
+            color_labels: colObj.labels,
+            pinned: state.pinned,
+            tags: state.tags
+          });
+        }, 220);
       }
 
       function closeModal() {
+        saveDiscardedDraftIfAny();
         send({ action: 'close' });
       }
+
+      btnPin.addEventListener('click', function () {
+        state.pinned = !state.pinned;
+        btnPin.classList.toggle('active', state.pinned);
+      });
+
+      btnChecklist.addEventListener('click', function () {
+        setChecklistMode(!state.isChecklist, false);
+      });
+
+      btnPalette.addEventListener('click', function () {
+        state.paletteOpen = !state.paletteOpen;
+        btnPalette.classList.toggle('active', state.paletteOpen);
+        paletteBar.classList.toggle('visible', state.paletteOpen);
+        requestResize();
+      });
+
+      btnTags.addEventListener('click', function () {
+        state.tagsOpen = !state.tagsOpen;
+        btnTags.classList.toggle('active', state.tagsOpen);
+        tagsBar.classList.toggle('visible', state.tagsOpen);
+        requestResize();
+        if (state.tagsOpen) tagInput.focus();
+      });
+
+      tagInput.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ',') {
+          e.preventDefault();
+          addTagFromInput();
+        }
+      });
+      tagInput.addEventListener('blur', addTagFromInput);
+
+      bodyEl.addEventListener('input', requestResize);
 
       titleEl.addEventListener('keydown', function (e) {
         if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
           e.preventDefault();
-          bodyEl.focus();
+          if (state.isChecklist) {
+            var first = checklistWrap.querySelector('input[type="text"]');
+            if (first) first.focus();
+          } else {
+            bodyEl.focus();
+          }
         }
       });
 
@@ -308,13 +888,21 @@ const QUICK_NOTE_HTML: &str = r#"<!DOCTYPE html>
       document.getElementById('btn-open-main').addEventListener('click', function () {
         send({ action: 'open_main' });
       });
-      document.querySelector('.header').addEventListener('mousedown', function (e) {
+
+      var dragHeader = document.getElementById('drag-header');
+      dragHeader.addEventListener('mousedown', function (e) {
         if (e.button === 0 && !e.target.closest('button')) {
           send({ action: 'drag' });
         }
       });
+      dragHeader.addEventListener('dblclick', function (e) {
+        if (!e.target.closest('button')) {
+          send({ action: 'center' });
+        }
+      });
 
       window.addEventListener('DOMContentLoaded', function () {
+        refreshDraftBadge();
         bodyEl.focus();
       });
     })();
@@ -322,11 +910,61 @@ const QUICK_NOTE_HTML: &str = r#"<!DOCTYPE html>
 </body>
 </html>"#;
 
-fn build_submit_note_js(title: &str, body: &str) -> String {
+#[derive(Deserialize)]
+struct ChecklistItemInput {
+    text: String,
+    checked: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+enum QuickNoteIpc {
+    Submit {
+        title: String,
+        body: String,
+        #[serde(default)]
+        is_checklist: bool,
+        #[serde(default)]
+        items: Vec<ChecklistItemInput>,
+        #[serde(default)]
+        color_labels: Vec<String>,
+        #[serde(default)]
+        pinned: bool,
+        #[serde(default)]
+        tags: Vec<String>,
+    },
+    Close,
+    OpenMain,
+    Drag,
+    Center,
+    Resize {
+        height: f64,
+    },
+}
+
+fn build_submit_note_js(
+    title: &str,
+    body: &str,
+    is_checklist: bool,
+    items: &[ChecklistItemInput],
+    color_labels: &[String],
+    pinned: bool,
+    tags: &[String],
+) -> String {
     let title_json = serde_json::to_string(title).unwrap_or_else(|_| "\"\"".to_string());
     let body_json = serde_json::to_string(body).unwrap_or_else(|_| "\"\"".to_string());
+    let items_json = serde_json::to_string(
+        &items
+            .iter()
+            .map(|i| serde_json::json!({ "text": i.text, "checked": i.checked }))
+            .collect::<Vec<_>>(),
+    )
+    .unwrap_or_else(|_| "[]".to_string());
+    let colors_json = serde_json::to_string(color_labels).unwrap_or_else(|_| "[]".to_string());
+    let tags_json = serde_json::to_string(tags).unwrap_or_else(|_| "[]".to_string());
+
     format!(
-        r#"(function (titleText, bodyText) {{
+        r#"(function (cfg) {{
   var attempts = 0;
   var maxAttempts = 50;
 
@@ -339,6 +977,23 @@ fn build_submit_note_js(title: &str, body: &str) -> String {
       cur = cur.parentElement;
     }}
     return true;
+  }}
+
+  function findButtonByLabels(root, patterns) {{
+    var nodes = (root || document).querySelectorAll('[role="button"], button, [role="menuitem"]');
+    for (var p = 0; p < patterns.length; p++) {{
+      var target = patterns[p].toLowerCase();
+      for (var i = 0; i < nodes.length; i++) {{
+        if (nodes[i].closest('[role="dialog"]') && root === document) continue;
+        var al = (nodes[i].getAttribute('aria-label') || '').toLowerCase();
+        var tt = (nodes[i].getAttribute('data-tooltip') || '').toLowerCase();
+        var tx = (nodes[i].textContent || '').trim().toLowerCase();
+        if ((al.indexOf(target) !== -1 || tt.indexOf(target) !== -1 || tx === target) && isNotHiddenByStyle(nodes[i])) {{
+          return nodes[i];
+        }}
+      }}
+    }}
+    return null;
   }}
 
   function findCollapsedOrBodyComposer() {{
@@ -363,6 +1018,17 @@ fn build_submit_note_js(title: &str, body: &str) -> String {
       }}
     }}
     return null;
+  }}
+
+  function findComposerRoot(refEl) {{
+    var cur = refEl;
+    for (var d = 0; d < 8 && cur; d++) {{
+      if (findButtonByLabels(cur, ['fechar', 'close', 'cerrar', 'fermer'])) {{
+        return cur;
+      }}
+      cur = cur.parentElement;
+    }}
+    return document;
   }}
 
   function findTitleBox() {{
@@ -400,29 +1066,6 @@ fn build_submit_note_js(title: &str, body: &str) -> String {
     return null;
   }}
 
-  function findCloseButton(referenceEl) {{
-    var scopes = [];
-    if (referenceEl) {{
-      var p = referenceEl.parentElement;
-      for (var d = 0; d < 6 && p; d++) {{
-        scopes.push(p);
-        p = p.parentElement;
-      }}
-    }}
-    scopes.push(document);
-    for (var s = 0; s < scopes.length; s++) {{
-      var btns = scopes[s].querySelectorAll('[role="button"], button');
-      for (var i = 0; i < btns.length; i++) {{
-        if (btns[i].closest('[role="dialog"]')) continue;
-        var txt = (btns[i].textContent || '').trim().toLowerCase();
-        if (txt === 'fechar' || txt === 'close' || txt === 'cerrar' || txt === 'fermer') {{
-          if (isNotHiddenByStyle(btns[i])) return btns[i];
-        }}
-      }}
-    }}
-    return null;
-  }}
-
   function insertIntoEditable(el, value) {{
     if (!el || !value) return;
     el.focus();
@@ -444,6 +1087,94 @@ fn build_submit_note_js(title: &str, body: &str) -> String {
       el.dispatchEvent(new Event('input', {{ bubbles: true }}));
     }}
     el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+  }}
+
+  function applyColorAndPinAndClose(root, refEl) {{
+    if (cfg.pinned) {{
+      var pinBtn = findButtonByLabels(root, ['fixar nota', 'pin note']);
+      if (pinBtn && pinBtn.getAttribute('aria-pressed') !== 'true') {{
+        pinBtn.click();
+      }}
+    }}
+
+    function doTagsAndClose() {{
+      if (cfg.tags && cfg.tags.length > 0) {{
+        var moreBtn = findButtonByLabels(root, ['mais', 'more']);
+        if (moreBtn) {{
+          moreBtn.click();
+          setTimeout(function () {{
+            var addLabelItem = findButtonByLabels(document, ['adicionar marcador', 'alterar marcadores', 'add label', 'change labels']);
+            if (addLabelItem) {{
+              addLabelItem.click();
+              setTimeout(function () {{
+                var idx = 0;
+                function nextTag() {{
+                  if (idx >= cfg.tags.length) {{
+                    setTimeout(finishClose, 160);
+                    return;
+                  }}
+                  var t = cfg.tags[idx++];
+                  var searchInput = document.querySelector('input[aria-label*="marcador" i], input[aria-label*="label" i], input[placeholder*="marcador" i], input[placeholder*="label" i]');
+                  if (searchInput) {{
+                    searchInput.focus();
+                    searchInput.value = t;
+                    searchInput.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                    setTimeout(function () {{
+                      var cbs = document.querySelectorAll('[role="menuitemcheckbox"], [role="checkbox"]');
+                      var clicked = false;
+                      for (var k = 0; k < cbs.length; k++) {{
+                        var labelTxt = (cbs[k].textContent || '').trim().toLowerCase();
+                        if (labelTxt === t.toLowerCase() || labelTxt.indexOf(t.toLowerCase()) !== -1) {{
+                          if (cbs[k].getAttribute('aria-checked') !== 'true') cbs[k].click();
+                          clicked = true;
+                          break;
+                        }}
+                      }}
+                      if (!clicked) {{
+                        var createBtn = findButtonByLabels(document, ['criar "' + t.toLowerCase() + '"', 'create "' + t.toLowerCase() + '"', 'criar marcador', 'create label']);
+                        if (createBtn) createBtn.click();
+                      }}
+                      setTimeout(nextTag, 120);
+                    }}, 120);
+                  }} else {{
+                    setTimeout(finishClose, 150);
+                  }}
+                }}
+                nextTag();
+              }}, 150);
+              return;
+            }}
+            setTimeout(finishClose, 150);
+          }}, 150);
+          return;
+        }}
+      }}
+      finishClose();
+    }}
+
+    function finishClose() {{
+      var closeBtn = findButtonByLabels(root, ['fechar', 'close', 'cerrar', 'fermer']);
+      if (closeBtn) {{
+        closeBtn.click();
+      }} else if (refEl) {{
+        refEl.blur();
+        document.body.click();
+      }}
+    }}
+
+    if (cfg.colorLabels && cfg.colorLabels.length > 0) {{
+      var colorBtn = findButtonByLabels(root, ['opções de plano de fundo', 'background options', 'alterar cor', 'change color']);
+      if (colorBtn) {{
+        colorBtn.click();
+        setTimeout(function () {{
+          var swatch = findButtonByLabels(document, cfg.colorLabels);
+          if (swatch) swatch.click();
+          setTimeout(doTagsAndClose, 150);
+        }}, 140);
+        return;
+      }}
+    }}
+    setTimeout(doTagsAndClose, 120);
   }}
 
   function step() {{
@@ -471,6 +1202,51 @@ fn build_submit_note_js(title: &str, body: &str) -> String {
       return;
     }}
 
+    if (cfg.isChecklist && cfg.items && cfg.items.length > 0) {{
+      var newListBtn = findButtonByLabels(document, ['nova lista', 'new list']);
+      if (newListBtn) {{
+        newListBtn.click();
+        setTimeout(function () {{
+          var titleBox = findTitleBox();
+          var cleanTitle = (cfg.title || '').trim();
+          if (cleanTitle && titleBox) {{
+            insertIntoEditable(titleBox, cleanTitle);
+          }}
+          var idx = 0;
+          function insertNextItem() {{
+            if (idx >= cfg.items.length) {{
+              var root = findComposerRoot(titleBox || document.activeElement);
+              setTimeout(function () {{ applyColorAndPinAndClose(root, titleBox); }}, 180);
+              return;
+            }}
+            var item = cfg.items[idx++];
+            var inputs = document.querySelectorAll('div[role="textbox"][aria-label*="Item da lista" i], div[role="textbox"][aria-label*="List item" i], div[role="textbox"][contenteditable="true"]');
+            var targetInput = null;
+            for (var i = inputs.length - 1; i >= 0; i--) {{
+              if (!inputs[i].closest('[role="dialog"]') && inputs[i] !== titleBox && isNotHiddenByStyle(inputs[i])) {{
+                if (!(inputs[i].textContent || '').trim()) {{
+                  targetInput = inputs[i];
+                  break;
+                }}
+              }}
+            }}
+            if (targetInput) {{
+              insertIntoEditable(targetInput, item.text);
+              targetInput.dispatchEvent(new KeyboardEvent('keydown', {{ key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }}));
+              if (item.checked) {{
+                var row = targetInput.parentElement && targetInput.parentElement.parentElement;
+                var cb = row && row.querySelector('[role="checkbox"]');
+                if (cb && cb.getAttribute('aria-checked') !== 'true') cb.click();
+              }}
+            }}
+            setTimeout(insertNextItem, 75);
+          }}
+          setTimeout(insertNextItem, 120);
+        }}, 180);
+        return;
+      }}
+    }}
+
     var box = findCollapsedOrBodyComposer();
     if (!box) {{
       setTimeout(step, 200);
@@ -490,8 +1266,10 @@ fn build_submit_note_js(title: &str, body: &str) -> String {
         return;
       }}
 
-      var cleanTitle = (titleText || '').trim();
-      var cleanBody = (bodyText || '').trimEnd();
+      var cleanTitle = (cfg.title || '').trim();
+      var cleanBody = cfg.isChecklist && cfg.items && cfg.items.length
+        ? cfg.items.map(function (i) {{ return i.text; }}).join('\n')
+        : (cfg.body || '').trimEnd();
 
       if (cleanTitle && titleBox) {{
         insertIntoEditable(titleBox, cleanTitle);
@@ -502,31 +1280,268 @@ fn build_submit_note_js(title: &str, body: &str) -> String {
         insertIntoEditable(bodyBox, cleanTitle);
       }}
 
+      var refEl = bodyBox || titleBox;
+      var root = findComposerRoot(refEl);
       setTimeout(function () {{
-        var refEl = bodyBox || titleBox;
-        var closeBtn = findCloseButton(refEl);
-        if (closeBtn) {{
-          closeBtn.click();
-        }} else if (refEl) {{
-          refEl.blur();
-          document.body.click();
-        }}
+        applyColorAndPinAndClose(root, refEl);
       }}, 200);
-    }}, 160);
+    }}, 170);
   }}
 
   step();
-}})({title_json}, {body_json});"#
+}})({{
+  title: {title_json},
+  body: {body_json},
+  isChecklist: {is_checklist},
+  items: {items_json},
+  colorLabels: {colors_json},
+  pinned: {pinned},
+  tags: {tags_json}
+}});"#
     )
 }
 
-#[derive(Deserialize)]
-#[serde(tag = "action", rename_all = "snake_case")]
-enum QuickNoteIpc {
-    Submit { title: String, body: String },
-    Close,
-    OpenMain,
-    Drag,
+fn build_main_ui_js(theme_preset: &str, compact_mode: bool, filter_bar: bool) -> String {
+    let theme_json =
+        serde_json::to_string(theme_preset).unwrap_or_else(|_| "\"default\"".to_string());
+    format!(
+        r#"(function (themeName, compactMode, showFilterBar) {{
+  try {{
+    if (window.location.hostname !== 'keep.google.com') return;
+
+    var themeVars = '';
+    if (themeName === 'amoled') {{
+      themeVars = 'body, html, header[role="banner"], .gb_Id, .gb_Kd, [role="navigation"] {{ background-color: #000000 !important; }} '
+        + '.IZ65Hb-n0tgWb {{ border-color: rgba(255,255,255,0.12) !important; }}';
+    }} else if (themeName === 'nord') {{
+      themeVars = 'body, html {{ background-color: #2e3440 !important; }} '
+        + 'header[role="banner"], .gb_Id, .gb_Kd, [role="navigation"] {{ background-color: #3b4252 !important; }} '
+        + '.IZ65Hb-n0tgWb {{ border-color: rgba(136,192,208,0.22) !important; }}';
+    }} else if (themeName === 'catppuccin') {{
+      themeVars = 'body, html {{ background-color: #1e1e2e !important; }} '
+        + 'header[role="banner"], .gb_Id, .gb_Kd, [role="navigation"] {{ background-color: #181825 !important; }} '
+        + '.IZ65Hb-n0tgWb {{ border-color: rgba(249,226,175,0.18) !important; }}';
+    }}
+
+    var compactCss = compactMode
+      ? 'header[role="banner"] a[aria-label*="Google Apps" i], header[role="banner"] a[aria-label*="Google apps" i], .gb_Se, .gb_Ve {{ display: none !important; }} '
+        + 'header[role="banner"] {{ min-height: 52px !important; }} '
+        + '@media (max-width: 780px) {{ [role="navigation"] {{ width: 64px !important; overflow: hidden !important; }} }}'
+      : '';
+
+    var styleText = ''
+      + '::-webkit-scrollbar {{ width: 8px; height: 8px; }}'
+      + '::-webkit-scrollbar-track {{ background: transparent; }}'
+      + '::-webkit-scrollbar-thumb {{ background: rgba(154,160,166,0.32); border-radius: 999px; border: 2px solid transparent; background-clip: content-box; }}'
+      + '::-webkit-scrollbar-thumb:hover {{ background: rgba(154,160,166,0.55); border: 2px solid transparent; background-clip: content-box; }}'
+      + '* {{ scrollbar-width: thin; scrollbar-color: rgba(154,160,166,0.35) transparent; }}'
+      + themeVars
+      + compactCss
+      + '.kd-note-dimmed {{ opacity: 0.14 !important; filter: saturate(0.2); transition: opacity 0.15s ease; }}'
+      + '.kd-note-match {{ box-shadow: 0 0 0 2px rgba(251,188,4,0.75) !important; transition: box-shadow 0.15s ease; }}'
+      + '.kd-note-hidden {{ display: none !important; }}'
+      + '#kd-filter-bar {{ position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%); z-index: 900; display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 999px; background: rgba(32,33,36,0.92); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.14); box-shadow: 0 6px 24px rgba(0,0,0,0.45); font-family: "Segoe UI", system-ui, sans-serif; color: #e8eaed; font-size: 12px; max-width: calc(100vw - 24px); flex-wrap: wrap; }}'
+      + '#kd-filter-bar.collapsed {{ padding: 5px 12px; }}'
+      + '#kd-filter-bar .kd-pill {{ border: 1px solid rgba(255,255,255,0.14); background: transparent; color: #bdc1c6; border-radius: 999px; padding: 3px 9px; font-size: 11px; cursor: pointer; white-space: nowrap; }}'
+      + '#kd-filter-bar .kd-pill:hover {{ background: rgba(255,255,255,0.08); color: #fff; }}'
+      + '#kd-filter-bar .kd-pill.active {{ background: rgba(251,188,4,0.2); color: #fbbc04; border-color: rgba(251,188,4,0.55); font-weight: 600; }}'
+      + '#kd-filter-bar .kd-search {{ border: 1px solid rgba(255,255,255,0.14); background: rgba(255,255,255,0.06); color: #e8eaed; border-radius: 999px; padding: 3px 10px; font-size: 11px; outline: none; width: 145px; }}'
+      + '#kd-filter-bar .kd-search:focus {{ border-color: rgba(251,188,4,0.65); }}'
+      + '#kd-filter-bar .kd-count {{ font-size: 11px; color: #9aa0a6; padding: 0 4px; white-space: nowrap; }}';
+
+    var styleEl = document.getElementById('kd-theme-style');
+    if (!styleEl) {{
+      styleEl = document.createElement('style');
+      styleEl.id = 'kd-theme-style';
+      (document.head || document.documentElement).appendChild(styleEl);
+    }}
+    styleEl.textContent = styleText;
+
+    function clearAllNoteClasses() {{
+      var notes = document.querySelectorAll('.kd-note-dimmed, .kd-note-match, .kd-note-hidden');
+      for (var i = 0; i < notes.length; i++) {{
+        notes[i].classList.remove('kd-note-dimmed', 'kd-note-match', 'kd-note-hidden');
+      }}
+    }}
+
+    var existingBar = document.getElementById('kd-filter-bar');
+    if (!showFilterBar) {{
+      if (existingBar) existingBar.remove();
+      clearAllNoteClasses();
+      return;
+    }}
+
+    if (existingBar) return;
+    if (!document.body) return;
+
+    var bar = document.createElement('div');
+    bar.id = 'kd-filter-bar';
+
+    var filterState = {{ mode: 'all', query: '', isolate: false, collapsed: false }};
+
+    function getNoteCards() {{
+      var cards = document.querySelectorAll('.IZ65Hb-n0tgWb');
+      var out = [];
+      for (var i = 0; i < cards.length; i++) {{
+        if (!cards[i].closest('[role="dialog"]') && !cards[i].closest('header')) {{
+          out.push(cards[i]);
+        }}
+      }}
+      return out;
+    }}
+
+    function cardMatches(card) {{
+      var q = filterState.query.trim().toLowerCase();
+      var text = (card.innerText || card.textContent || '').toLowerCase();
+      if (q) {{
+        var terms = q.split(/\s+/);
+        for (var i = 0; i < terms.length; i++) {{
+          var term = terms[i].replace(/^#/, '');
+          if (term && text.indexOf(term) === -1) return false;
+        }}
+      }}
+      if (filterState.mode === 'pinned') {{
+        var pinBtn = card.querySelector('[aria-label*="Desafixar" i], [aria-label*="Unpin" i]');
+        return !!pinBtn;
+      }}
+      if (filterState.mode === 'lists') {{
+        return !!card.querySelector('[role="checkbox"]');
+      }}
+      if (filterState.mode === 'unchecked') {{
+        return !!card.querySelector('[role="checkbox"][aria-checked="false"]');
+      }}
+      if (filterState.mode === 'untagged') {{
+        var labels = card.querySelectorAll('[aria-label*="Remover marcador" i], [aria-label*="Remove label" i], .Q0hgme-LgbsSe-Bz112c');
+        return labels.length === 0;
+      }}
+      return true;
+    }}
+
+    function applyFilter() {{
+      var cards = getNoteCards();
+      var isActive = filterState.mode !== 'all' || filterState.query.trim().length > 0;
+      var matched = 0;
+      for (var i = 0; i < cards.length; i++) {{
+        var c = cards[i];
+        c.classList.remove('kd-note-dimmed', 'kd-note-match', 'kd-note-hidden');
+        if (!isActive) continue;
+        if (cardMatches(c)) {{
+          matched++;
+          c.classList.add('kd-note-match');
+        }} else {{
+          c.classList.add(filterState.isolate ? 'kd-note-hidden' : 'kd-note-dimmed');
+        }}
+      }}
+      var countEl = bar.querySelector('.kd-count');
+      if (countEl) {{
+        countEl.textContent = isActive ? (matched + '/' + cards.length) : (cards.length + ' notas');
+      }}
+    }}
+
+    function renderBar() {{
+      bar.innerHTML = '';
+      bar.classList.toggle('collapsed', filterState.collapsed);
+
+      if (filterState.collapsed) {{
+        var expandBtn = document.createElement('button');
+        expandBtn.className = 'kd-pill active';
+        expandBtn.textContent = 'Filtros \u25b2';
+        expandBtn.addEventListener('click', function () {{
+          filterState.collapsed = false;
+          renderBar();
+          applyFilter();
+        }});
+        bar.appendChild(expandBtn);
+        return;
+      }}
+
+      var modes = [
+        {{ id: 'all', label: 'Todas' }},
+        {{ id: 'pinned', label: 'Fixadas' }},
+        {{ id: 'lists', label: 'Listas' }},
+        {{ id: 'unchecked', label: 'Pendentes' }}
+      ];
+      modes.forEach(function (m) {{
+        var btn = document.createElement('button');
+        btn.className = 'kd-pill' + (filterState.mode === m.id ? ' active' : '');
+        btn.textContent = m.label;
+        btn.addEventListener('click', function () {{
+          filterState.mode = m.id;
+          renderBar();
+          applyFilter();
+        }});
+        bar.appendChild(btn);
+      }});
+
+      var search = document.createElement('input');
+      search.className = 'kd-search';
+      search.type = 'text';
+      search.placeholder = 'Filtrar texto / #tag...';
+      search.value = filterState.query;
+      search.addEventListener('input', function () {{
+        filterState.query = search.value;
+        applyFilter();
+      }});
+      bar.appendChild(search);
+
+      var isoBtn = document.createElement('button');
+      isoBtn.className = 'kd-pill' + (filterState.isolate ? ' active' : '');
+      isoBtn.title = 'Ocultar notas não correspondentes';
+      isoBtn.textContent = 'Isolar';
+      isoBtn.addEventListener('click', function () {{
+        filterState.isolate = !filterState.isolate;
+        isoBtn.classList.toggle('active', filterState.isolate);
+        applyFilter();
+      }});
+      bar.appendChild(isoBtn);
+
+      var count = document.createElement('span');
+      count.className = 'kd-count';
+      bar.appendChild(count);
+
+      if (filterState.mode !== 'all' || filterState.query) {{
+        var clr = document.createElement('button');
+        clr.className = 'kd-pill';
+        clr.textContent = '\u00d7';
+        clr.title = 'Limpar filtros';
+        clr.addEventListener('click', function () {{
+          filterState.mode = 'all';
+          filterState.query = '';
+          renderBar();
+          applyFilter();
+        }});
+        bar.appendChild(clr);
+      }}
+
+      var minBtn = document.createElement('button');
+      minBtn.className = 'kd-pill';
+      minBtn.textContent = '\u25bc';
+      minBtn.title = 'Recolher barra';
+      minBtn.addEventListener('click', function () {{
+        filterState.collapsed = true;
+        renderBar();
+      }});
+      bar.appendChild(minBtn);
+
+      applyFilter();
+    }}
+
+    document.body.appendChild(bar);
+    renderBar();
+
+    if (!bar.dataset.kdObserved) {{
+      bar.dataset.kdObserved = '1';
+      var timer = null;
+      var obs = new MutationObserver(function () {{
+        if (filterState.mode === 'all' && !filterState.query.trim()) return;
+        clearTimeout(timer);
+        timer = setTimeout(applyFilter, 250);
+      }});
+      obs.observe(document.body, {{ childList: true, subtree: true }});
+    }}
+  }} catch (_) {{}}
+}})({theme_json}, {compact_mode}, {filter_bar});"#
+    )
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -540,6 +1555,9 @@ struct AppConfig {
     zoom: f64,
     autostart: bool,
     sw_migrated_v2: bool,
+    theme_preset: String,
+    compact_mode: bool,
+    filter_bar: bool,
 }
 
 impl Default for AppConfig {
@@ -553,6 +1571,9 @@ impl Default for AppConfig {
             zoom: 1.0,
             autostart: false,
             sw_migrated_v2: false,
+            theme_preset: "default".to_string(),
+            compact_mode: false,
+            filter_bar: true,
         }
     }
 }
@@ -590,6 +1611,12 @@ fn load_config(path: &Path) -> AppConfig {
         .and_then(|raw| serde_json::from_str::<AppConfig>(&raw).ok())
         .unwrap_or_default();
     cfg.zoom = clamp_zoom(cfg.zoom);
+    if !matches!(
+        cfg.theme_preset.as_str(),
+        "default" | "amoled" | "nord" | "catppuccin"
+    ) {
+        cfg.theme_preset = "default".to_string();
+    }
     cfg
 }
 
@@ -634,6 +1661,49 @@ where
         });
     });
 }
+
+fn apply_main_ui_enhancements(app: &AppHandle) {
+    let (theme, compact, filter_bar) = app
+        .state::<AppState>()
+        .config
+        .lock()
+        .map(|cfg| (cfg.theme_preset.clone(), cfg.compact_mode, cfg.filter_bar))
+        .unwrap_or_else(|_| ("default".to_string(), false, true));
+
+    if let Some(win) = app.get_window("main") {
+        with_keep_webview(&win, move |wv| {
+            let script = build_main_ui_js(&theme, compact, filter_bar);
+            let _ = wv.evaluate_script(&script);
+        });
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn apply_quick_note_native_style(window: &Window) {
+    use windows::Win32::{
+        Foundation::HWND,
+        Graphics::Dwm::{
+            DwmSetWindowAttribute, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
+            DWM_WINDOW_CORNER_PREFERENCE,
+        },
+    };
+
+    if let Ok(raw_hwnd) = window.hwnd() {
+        let hwnd = HWND(raw_hwnd.0 as _);
+        let pref = DWMWCP_ROUND;
+        unsafe {
+            let _ = DwmSetWindowAttribute(
+                hwnd,
+                DWMWA_WINDOW_CORNER_PREFERENCE,
+                &pref as *const _ as *const std::ffi::c_void,
+                std::mem::size_of::<DWM_WINDOW_CORNER_PREFERENCE>() as u32,
+            );
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn apply_quick_note_native_style(_window: &Window) {}
 
 fn show_and_focus_window(window: &Window) {
     let _ = window.show();
@@ -687,8 +1757,18 @@ fn trigger_quick_note(app: &AppHandle) {
     }
 }
 
-fn submit_quick_note_to_keep(app: &AppHandle, title: String, body: String) {
-    if title.trim().is_empty() && body.trim().is_empty() {
+fn submit_quick_note_to_keep(
+    app: &AppHandle,
+    title: String,
+    body: String,
+    is_checklist: bool,
+    items: Vec<ChecklistItemInput>,
+    color_labels: Vec<String>,
+    pinned: bool,
+    tags: Vec<String>,
+) {
+    let has_items = is_checklist && items.iter().any(|i| !i.text.trim().is_empty());
+    if title.trim().is_empty() && body.trim().is_empty() && !has_items {
         return;
     }
     hide_quick_note(app, true);
@@ -701,7 +1781,15 @@ fn submit_quick_note_to_keep(app: &AppHandle, title: String, body: String) {
                     return;
                 }
             }
-            let script = build_submit_note_js(&title, &body);
+            let script = build_submit_note_js(
+                &title,
+                &body,
+                is_checklist,
+                &items,
+                &color_labels,
+                pinned,
+                &tags,
+            );
             let _ = wv.evaluate_script(&script);
         });
     }
@@ -1134,6 +2222,9 @@ fn main() {
             let initial_zoom = initial_cfg.zoom;
             let initial_pin = initial_cfg.always_on_top;
             let initial_autostart = initial_cfg.autostart;
+            let initial_theme = initial_cfg.theme_preset.clone();
+            let initial_compact = initial_cfg.compact_mode;
+            let initial_filter_bar = initial_cfg.filter_bar;
             let saved_size = initial_cfg.width.zip(initial_cfg.height);
             let saved_pos = initial_cfg.x.zip(initial_cfg.y);
 
@@ -1220,14 +2311,23 @@ fn main() {
                     .with_on_page_load_handler(move |event, _| {
                         if matches!(event, PageLoadEvent::Finished) {
                             let state = page_load_app.state::<AppState>();
-                            let zoom = state
+                            let (zoom, theme, compact, filter_bar) = state
                                 .config
                                 .lock()
-                                .map(|cfg| cfg.zoom)
-                                .unwrap_or(1.0);
+                                .map(|cfg| {
+                                    (
+                                        cfg.zoom,
+                                        cfg.theme_preset.clone(),
+                                        cfg.compact_mode,
+                                        cfg.filter_bar,
+                                    )
+                                })
+                                .unwrap_or_else(|_| (1.0, "default".to_string(), false, true));
                             if let Some(win) = page_load_app.get_window("main") {
                                 with_keep_webview(&win, move |wv| {
                                     let _ = wv.zoom(zoom);
+                                    let script = build_main_ui_js(&theme, compact, filter_bar);
+                                    let _ = wv.evaluate_script(&script);
                                 });
                             }
                         }
@@ -1280,7 +2380,7 @@ fn main() {
             // Mini-janela dedicada para anotação rápida (Ctrl+K) sem exibir a janela principal
             let mut qn_builder = Window::builder(app, "quick-note")
                 .title("Nova nota rápida — Google Keep")
-                .inner_size(460.0, 290.0)
+                .inner_size(480.0, 330.0)
                 .resizable(false)
                 .decorations(false)
                 .always_on_top(true)
@@ -1294,6 +2394,7 @@ fn main() {
             }
 
             let qn_window = qn_builder.build()?;
+            apply_quick_note_native_style(&qn_window);
 
             let mut qn_web_context = wry::WebContext::new(qn_data_dir);
             let ipc_app = app.handle().clone();
@@ -1306,8 +2407,25 @@ fn main() {
                         if let Ok(msg) = serde_json::from_str::<QuickNoteIpc>(req.body()) {
                             let app_handle = ipc_app.clone();
                             let _ = ipc_app.run_on_main_thread(move || match msg {
-                                QuickNoteIpc::Submit { title, body } => {
-                                    submit_quick_note_to_keep(&app_handle, title, body);
+                                QuickNoteIpc::Submit {
+                                    title,
+                                    body,
+                                    is_checklist,
+                                    items,
+                                    color_labels,
+                                    pinned,
+                                    tags,
+                                } => {
+                                    submit_quick_note_to_keep(
+                                        &app_handle,
+                                        title,
+                                        body,
+                                        is_checklist,
+                                        items,
+                                        color_labels,
+                                        pinned,
+                                        tags,
+                                    );
                                 }
                                 QuickNoteIpc::Close => {
                                     hide_quick_note(&app_handle, true);
@@ -1321,6 +2439,18 @@ fn main() {
                                 QuickNoteIpc::Drag => {
                                     if let Some(qn_win) = app_handle.get_window("quick-note") {
                                         let _ = qn_win.start_dragging();
+                                    }
+                                }
+                                QuickNoteIpc::Center => {
+                                    if let Some(qn_win) = app_handle.get_window("quick-note") {
+                                        let _ = qn_win.center();
+                                    }
+                                }
+                                QuickNoteIpc::Resize { height } => {
+                                    if let Some(qn_win) = app_handle.get_window("quick-note") {
+                                        let h = height.clamp(320.0, 480.0);
+                                        let _ =
+                                            qn_win.set_size(tauri::LogicalSize::new(480.0, h));
                                     }
                                 }
                             });
@@ -1385,6 +2515,71 @@ fn main() {
                 None::<&str>,
             )?;
 
+            let theme_default_item = CheckMenuItem::with_id(
+                app,
+                "theme_default",
+                "Tema: Padrão Keep",
+                true,
+                initial_theme == "default",
+                None::<&str>,
+            )?;
+            let theme_amoled_item = CheckMenuItem::with_id(
+                app,
+                "theme_amoled",
+                "Tema: AMOLED (Preto puro)",
+                true,
+                initial_theme == "amoled",
+                None::<&str>,
+            )?;
+            let theme_nord_item = CheckMenuItem::with_id(
+                app,
+                "theme_nord",
+                "Tema: Nord Escuro",
+                true,
+                initial_theme == "nord",
+                None::<&str>,
+            )?;
+            let theme_catppuccin_item = CheckMenuItem::with_id(
+                app,
+                "theme_catppuccin",
+                "Tema: Catppuccin Mocha",
+                true,
+                initial_theme == "catppuccin",
+                None::<&str>,
+            )?;
+            let sep_appearance = PredefinedMenuItem::separator(app)?;
+            let compact_mode_item = CheckMenuItem::with_id(
+                app,
+                "compact_mode",
+                "Modo Compacto / Foco",
+                true,
+                initial_compact,
+                None::<&str>,
+            )?;
+            let filter_bar_item = CheckMenuItem::with_id(
+                app,
+                "filter_bar",
+                "Barra de filtros rápidos",
+                true,
+                initial_filter_bar,
+                None::<&str>,
+            )?;
+            let appearance_submenu = Submenu::with_id_and_items(
+                app,
+                "appearance_menu",
+                "Aparência",
+                true,
+                &[
+                    &theme_default_item,
+                    &theme_amoled_item,
+                    &theme_nord_item,
+                    &theme_catppuccin_item,
+                    &sep_appearance,
+                    &compact_mode_item,
+                    &filter_bar_item,
+                ],
+            )?;
+
             let zoom_in_item =
                 MenuItem::with_id(app, "zoom_in", "Aumentar (+10%)", true, None::<&str>)?;
             let zoom_out_item =
@@ -1419,6 +2614,7 @@ fn main() {
                     &sep_top,
                     &pin_item,
                     &autostart_item,
+                    &appearance_submenu,
                     &zoom_submenu,
                     &sep_mid,
                     &devtools_item,
@@ -1430,6 +2626,12 @@ fn main() {
             let pin_clone = pin_item.clone();
             let autostart_clone = autostart_item.clone();
             let zoom_status_clone = zoom_status_item.clone();
+            let theme_default_clone = theme_default_item.clone();
+            let theme_amoled_clone = theme_amoled_item.clone();
+            let theme_nord_clone = theme_nord_item.clone();
+            let theme_catppuccin_clone = theme_catppuccin_item.clone();
+            let compact_clone = compact_mode_item.clone();
+            let filter_bar_clone = filter_bar_item.clone();
 
             let mut tray_builder = TrayIconBuilder::new()
                 .menu(&menu)
@@ -1479,6 +2681,48 @@ fn main() {
                                 let _ = autostart_clone.set_checked(current);
                             }
                         }
+                    }
+                    "theme_default" | "theme_amoled" | "theme_nord" | "theme_catppuccin" => {
+                        let chosen = match event.id.as_ref() {
+                            "theme_amoled" => "amoled",
+                            "theme_nord" => "nord",
+                            "theme_catppuccin" => "catppuccin",
+                            _ => "default",
+                        };
+                        let state = app.state::<AppState>();
+                        if let Ok(mut cfg) = state.config.lock() {
+                            cfg.theme_preset = chosen.to_string();
+                            save_config(&state.config_path, &cfg);
+                        }
+                        let _ = theme_default_clone.set_checked(chosen == "default");
+                        let _ = theme_amoled_clone.set_checked(chosen == "amoled");
+                        let _ = theme_nord_clone.set_checked(chosen == "nord");
+                        let _ = theme_catppuccin_clone.set_checked(chosen == "catppuccin");
+                        apply_main_ui_enhancements(app);
+                    }
+                    "compact_mode" => {
+                        let state = app.state::<AppState>();
+                        let next = if let Ok(mut cfg) = state.config.lock() {
+                            cfg.compact_mode = !cfg.compact_mode;
+                            save_config(&state.config_path, &cfg);
+                            cfg.compact_mode
+                        } else {
+                            false
+                        };
+                        let _ = compact_clone.set_checked(next);
+                        apply_main_ui_enhancements(app);
+                    }
+                    "filter_bar" => {
+                        let state = app.state::<AppState>();
+                        let next = if let Ok(mut cfg) = state.config.lock() {
+                            cfg.filter_bar = !cfg.filter_bar;
+                            save_config(&state.config_path, &cfg);
+                            cfg.filter_bar
+                        } else {
+                            true
+                        };
+                        let _ = filter_bar_clone.set_checked(next);
+                        apply_main_ui_enhancements(app);
                     }
                     "zoom_in" => {
                         let current = app
