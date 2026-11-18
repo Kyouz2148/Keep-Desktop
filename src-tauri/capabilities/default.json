@@ -1,15 +1,13 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Permissões padrão para janela principal e atalhos globais",
+  "description": "Permissões padrão para janela principal",
   "windows": ["main"],
   "permissions": [
     "core:default",
     "core:window:allow-show",
     "core:window:allow-hide",
     "core:window:allow-set-focus",
-    "core:window:allow-set-always-on-top",
-    "global-shortcut:allow-register",
-    "global-shortcut:allow-unregister"
+    "core:window:allow-set-always-on-top"
   ]
 }

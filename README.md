@@ -31,7 +31,7 @@ O objetivo do **Google Keep Desktop** é oferecer uma janela dedicada, discreta,
 
 ---
 
-## Recursos atuais (`v0.2.12`)
+## Recursos atuais (`v0.2.13`)
 
 <div align="center">
   <img src="docs/tray-menu.jpg" alt="Menu da bandeja do sistema (System Tray) do Google Keep Desktop" width="460" />
@@ -39,16 +39,10 @@ O objetivo do **Google Keep Desktop** é oferecer uma janela dedicada, discreta,
 
 <br />
 
-- **Painel deslizante do Gemini com chat por texto e voz**:
-  - Barra superior integrada com botão **Gemini ▾** que desliza suavemente o chat oficial do Gemini (`https://gemini.google.com`) na parte superior da janela (compartilhando a sessão Google e com opção de expandir/recolher altura).
-  - Botão **Conversar por voz** para abrir o Gemini já ativando entrada de microfone / *Gemini Live* e leitura automática das respostas por voz (com permissão de microfone e áudio liberadas no WebView).
 - **Bandeja do sistema (System Tray) e instância única**:
   - Clique esquerdo no ícone alterna entre mostrar e ocultar a janela.
   - Fechar no `X` apenas oculta o app na bandeja, mantendo sua sessão do Google ativa e abertura instantânea.
   - Garantia de **instância única** (`tauri-plugin-single-instance`): abrir o aplicativo novamente foca a janela existente em vez de duplicar o processo e o ícone na bandeja.
-- **Atalho global de nota rápida (`Ctrl + K`)**:
-  - `Ctrl + K` — Abre **apenas uma mini-janela flutuante** (com cantos arredondados nativos no Windows 11, arrastável pelo cabeçalho) sem abrir a janela principal do Keep.
-  - Suporta **seletor de cor/tema** (paleta oficial Keep com correspondência por nome e cor), **modo checklist** interativo (inserção e validação item a item no Keep), **fixar no topo**, **seletor de marcadores do Keep** (lista e sincroniza os marcadores existentes e permite criar novos diretamente pelo atalho), **recuperação de rascunho** caso fechada com `Esc`, auto-expansão de altura, validação real de salvamento e envio silencioso (`Ctrl + Enter` salva, `Esc` fecha).
 - **Personalização visual na janela principal (submenu *Aparência*)**:
   - **Temas**: *Padrão Keep*, *AMOLED (Preto puro)*, *Nord Escuro* e *Catppuccin Mocha*.
   - **Scrollbars escuras e finas** nativas e **Modo Compacto / Foco** (oculta atalhos web extras do Google e recolhe a barra lateral em janelas estreitas).
@@ -71,8 +65,8 @@ O objetivo do **Google Keep Desktop** é oferecer uma janela dedicada, discreta,
 
 ### Stack utilizada
 
-- **Rust + Tauri v2 (`tauri`)**: gerencia ciclo de vida da aplicação, janela nativa, bandeja do sistema (*System Tray*), atalho global (`tauri-plugin-global-shortcut`) e empacotamento (NSIS no Windows; `.deb` e `.flatpak` no Linux).
-- **WebView pura com `wry` (`WebView2` / `WebKitGTK`)**: renderiza diretamente `https://keep.google.com` sem injetar `window.ipc` na página do Google Keep, além de manter uma mini-janela isolada para captura rápida de notas em `Ctrl + K`.
+- **Rust + Tauri v2 (`tauri`)**: gerencia ciclo de vida da aplicação, janela nativa, bandeja do sistema (*System Tray*) e empacotamento (NSIS no Windows; `.deb` e `.flatpak` no Linux).
+- **WebView pura com `wry` (`WebView2` / `WebKitGTK`)**: renderiza diretamente `https://keep.google.com` sem injetar `window.ipc` na página do Google Keep.
 - **APIs Win32 / GTK**: controle fino de perfil/privacidade e zoom no WebView2/WebKitGTK, abertura de URLs externas e gerenciamento do autostart no sistema.
 
 ### O principal desafio técnico (e por que a arquitetura é assim)
@@ -89,7 +83,6 @@ Ao tentar carregar o Google Keep dentro de uma `WebviewWindow` padrão do Tauri,
 - Em vez de declarar janelas em `tauri.conf.json`, a janela nativa é criada diretamente com `tauri::Window::builder` (feature `unstable` do Tauri v2) sem `WebviewWindow`.
 - Sobre a janela principal, anexamos uma instância pura de `wry::WebViewBuilder` (sem `ipc_handler` e sem `custom_protocol`), armazenada em `thread_local!` na thread principal.
 - Antes de navegar para `https://keep.google.com`, configuramos o perfil do WebView2 no Windows com `COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_NONE`, passamos flags de compatibilidade (`--disable-features=...ServiceWorkerStaticRouter,ThirdPartyStoragePartitioning,TrackingProtection3pcd`) e limpamos Service Workers antigos sem apagar cookies/autenticação.
-- A mini-janela de nota rápida (`Ctrl + K`) roda em uma segunda janela/WebView isolada com UI própria e envia título/conteúdo via IPC para o backend Rust, que injeta a nota silenciosamente na WebView oculta do Keep via `evaluate_script` dentro de uma IIFE isolada, sem abrir a janela principal.
 
 ---
 
