@@ -255,46 +255,120 @@ const QUICK_NOTE_HTML: &str = r#"<!DOCTYPE html>
   }
   .tags-bar {
     display: none;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 5px;
-    padding: 4px 14px 6px;
+    flex-direction: column;
+    gap: 6px;
+    padding: 7px 14px 8px;
+    border-top: 1px solid var(--subtle-border);
+    background: rgba(0, 0, 0, 0.14);
   }
   .tags-bar.visible {
     display: flex;
+  }
+  .tags-selected {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 5px;
+  }
+  .tags-selected:empty {
+    display: none;
   }
   .tag-chip {
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    background: rgba(255, 255, 255, 0.1);
-    border: 1px solid rgba(255, 255, 255, 0.14);
-    color: #e8eaed;
+    background: rgba(251, 188, 4, 0.18);
+    border: 1px solid rgba(251, 188, 4, 0.45);
+    color: #fdd663;
     font-size: 11px;
+    font-weight: 500;
     padding: 2px 7px;
     border-radius: 999px;
   }
   .tag-chip button {
     border: none;
     background: transparent;
-    color: #bdc1c6;
+    color: #fdd663;
     cursor: pointer;
     font-size: 12px;
     line-height: 1;
+    padding: 0 1px;
+  }
+  .tags-input-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
   }
   #tag-input {
-    flex: 1;
-    min-width: 110px;
-    border: none;
+    width: 100%;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 6px;
     outline: none;
-    background: transparent;
+    background: rgba(255, 255, 255, 0.05);
     color: #e8eaed;
     font-size: 12px;
     font-family: inherit;
+    padding: 4px 8px;
     user-select: text;
+  }
+  #tag-input:focus {
+    border-color: rgba(251, 188, 4, 0.6);
   }
   #tag-input::placeholder {
     color: rgba(232, 234, 237, 0.45);
+  }
+  .labels-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    max-height: 92px;
+    overflow-y: auto;
+    padding-right: 2px;
+  }
+  .labels-list::-webkit-scrollbar {
+    width: 5px;
+  }
+  .labels-list::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18);
+    border-radius: 999px;
+  }
+  .label-opt {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    background: rgba(255, 255, 255, 0.05);
+    color: #bdc1c6;
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: background 0.14s, color 0.14s, border-color 0.14s;
+  }
+  .label-opt:hover {
+    background: rgba(255, 255, 255, 0.12);
+    color: #fff;
+  }
+  .label-opt.selected {
+    background: rgba(251, 188, 4, 0.2);
+    border-color: rgba(251, 188, 4, 0.6);
+    color: #fbbc04;
+    font-weight: 600;
+  }
+  .label-opt.create-opt {
+    border-style: dashed;
+    border-color: rgba(129, 201, 149, 0.55);
+    color: #81c995;
+    background: rgba(129, 201, 149, 0.1);
+  }
+  .label-opt.create-opt:hover {
+    background: rgba(129, 201, 149, 0.2);
+    color: #a8dab5;
+  }
+  .labels-empty {
+    font-size: 11px;
+    color: rgba(232, 234, 237, 0.45);
+    padding: 2px 0;
   }
   .palette-bar {
     display: none;
@@ -424,8 +498,11 @@ const QUICK_NOTE_HTML: &str = r#"<!DOCTYPE html>
     </div>
 
     <div id="tags-bar" class="tags-bar">
-      <span id="tags-chips"></span>
-      <input id="tag-input" type="text" placeholder="Adicionar marcador (Enter)..." autocomplete="off" />
+      <div id="tags-chips" class="tags-selected"></div>
+      <div class="tags-input-row">
+        <input id="tag-input" type="text" placeholder="Buscar ou criar marcador (Enter)..." autocomplete="off" />
+      </div>
+      <div id="labels-list" class="labels-list"></div>
     </div>
 
     <div id="palette-bar" class="palette-bar"></div>
@@ -487,6 +564,7 @@ const QUICK_NOTE_HTML: &str = r#"<!DOCTYPE html>
       var tagsBar = document.getElementById('tags-bar');
       var tagsChips = document.getElementById('tags-chips');
       var tagInput = document.getElementById('tag-input');
+      var labelsList = document.getElementById('labels-list');
       var hintEl = document.getElementById('hint-text');
       var btnPin = document.getElementById('btn-pin');
       var btnChecklist = document.getElementById('btn-checklist');
@@ -500,10 +578,17 @@ const QUICK_NOTE_HTML: &str = r#"<!DOCTYPE html>
         isChecklist: false,
         items: [{ text: '', checked: false }],
         tags: [],
+        availableLabels: [],
         paletteOpen: false,
         tagsOpen: false,
         saving: false
       };
+
+      function clearChildren(el) {
+        while (el.firstChild) {
+          el.removeChild(el.firstChild);
+        }
+      }
 
       function send(payload) {
         if (window.ipc && typeof window.ipc.postMessage === 'function') {
@@ -536,24 +621,58 @@ const QUICK_NOTE_HTML: &str = r#"<!DOCTYPE html>
 
       function requestResize() {
         var extra = 0;
-        if (state.paletteOpen) extra += 32;
-        if (state.tagsOpen) extra += 34;
+        if (state.paletteOpen) extra += 34;
+        if (state.tagsOpen) extra += 136;
         if (state.isChecklist) {
           extra += Math.min(Math.max(0, state.items.length - 3) * 28, 120);
         } else {
           var lines = (bodyEl.value.match(/\n/g) || []).length;
           extra += Math.min(Math.max(0, lines - 3) * 20, 110);
         }
-        var targetH = Math.min(480, Math.max(330, 330 + extra));
+        var targetH = Math.min(540, Math.max(330, 330 + extra));
         send({ action: 'resize', height: targetH });
       }
 
+      function findSelectedIndex(name) {
+        var target = name.toLowerCase();
+        for (var i = 0; i < state.tags.length; i++) {
+          if (state.tags[i].toLowerCase() === target) return i;
+        }
+        return -1;
+      }
+
+      function toggleTag(name) {
+        var clean = String(name || '').replace(/^#+/, '').trim();
+        if (!clean) return;
+        var idx = findSelectedIndex(clean);
+        if (idx !== -1) {
+          state.tags.splice(idx, 1);
+        } else {
+          state.tags.push(clean);
+        }
+        var existsInAvail = state.availableLabels.some(function (l) {
+          return l.toLowerCase() === clean.toLowerCase();
+        });
+        if (!existsInAvail) {
+          state.availableLabels.push(clean);
+          state.availableLabels.sort(function (a, b) {
+            return a.localeCompare(b, undefined, { sensitivity: 'base' });
+          });
+        }
+        renderTags();
+        if (state.tagsOpen) requestResize();
+      }
+
       function renderTags() {
-        tagsChips.innerHTML = '';
+        clearChildren(tagsChips);
+        clearChildren(labelsList);
+
+        btnTags.classList.toggle('active', state.tagsOpen || state.tags.length > 0);
+
         state.tags.forEach(function (tag, idx) {
           var chip = document.createElement('span');
           chip.className = 'tag-chip';
-          chip.textContent = '#' + tag + ' ';
+          chip.appendChild(document.createTextNode('#' + tag + ' '));
           var rm = document.createElement('button');
           rm.type = 'button';
           rm.textContent = '\u00d7';
@@ -564,6 +683,63 @@ const QUICK_NOTE_HTML: &str = r#"<!DOCTYPE html>
           chip.appendChild(rm);
           tagsChips.appendChild(chip);
         });
+
+        var queryRaw = tagInput.value.replace(/^#+/, '').trim();
+        var query = queryRaw.toLowerCase();
+
+        var poolMap = Object.create(null);
+        var allLabels = [];
+        state.availableLabels.concat(state.tags).forEach(function (lbl) {
+          var clean = String(lbl || '').trim();
+          if (!clean) return;
+          var key = clean.toLowerCase();
+          if (!poolMap[key]) {
+            poolMap[key] = clean;
+            allLabels.push(clean);
+          }
+        });
+        allLabels.sort(function (a, b) {
+          return a.localeCompare(b, undefined, { sensitivity: 'base' });
+        });
+
+        var exactExists = query ? !!poolMap[query] : false;
+        var filtered = allLabels.filter(function (lbl) {
+          return !query || lbl.toLowerCase().indexOf(query) !== -1;
+        });
+
+        filtered.forEach(function (lbl) {
+          var isSel = findSelectedIndex(lbl) !== -1;
+          var btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'label-opt' + (isSel ? ' selected' : '');
+          btn.textContent = (isSel ? '\u2713 ' : '') + lbl;
+          btn.addEventListener('click', function () {
+            toggleTag(lbl);
+            tagInput.value = '';
+            renderTags();
+            tagInput.focus();
+          });
+          labelsList.appendChild(btn);
+        });
+
+        if (queryRaw && !exactExists) {
+          var createBtn = document.createElement('button');
+          createBtn.type = 'button';
+          createBtn.className = 'label-opt create-opt';
+          createBtn.textContent = '+ Criar marcador "' + queryRaw + '"';
+          createBtn.addEventListener('click', function () {
+            toggleTag(queryRaw);
+            tagInput.value = '';
+            renderTags();
+            tagInput.focus();
+          });
+          labelsList.appendChild(createBtn);
+        } else if (!filtered.length) {
+          var empty = document.createElement('span');
+          empty.className = 'labels-empty';
+          empty.textContent = 'Nenhum marcador encontrado \u2014 digite acima para criar';
+          labelsList.appendChild(empty);
+        }
       }
 
       function addTagFromInput() {
@@ -571,16 +747,47 @@ const QUICK_NOTE_HTML: &str = r#"<!DOCTYPE html>
         if (!raw) return;
         raw.split(',').forEach(function (part) {
           var clean = part.replace(/^#+/, '').trim();
-          if (clean && state.tags.indexOf(clean) === -1) {
-            state.tags.push(clean);
+          if (!clean) return;
+          var existing = state.availableLabels.find(function (l) {
+            return l.toLowerCase() === clean.toLowerCase();
+          });
+          var target = existing || clean;
+          if (findSelectedIndex(target) === -1) {
+            state.tags.push(target);
           }
+          if (!existing) {
+            state.availableLabels.push(clean);
+          }
+        });
+        state.availableLabels.sort(function (a, b) {
+          return a.localeCompare(b, undefined, { sensitivity: 'base' });
         });
         tagInput.value = '';
         renderTags();
       }
 
+      window.setAvailableLabels = function (labels) {
+        if (!Array.isArray(labels)) return;
+        var map = Object.create(null);
+        var next = [];
+        labels.forEach(function (l) {
+          var clean = String(l || '').trim();
+          if (!clean) return;
+          var key = clean.toLowerCase();
+          if (!map[key]) {
+            map[key] = 1;
+            next.push(clean);
+          }
+        });
+        next.sort(function (a, b) {
+          return a.localeCompare(b, undefined, { sensitivity: 'base' });
+        });
+        state.availableLabels = next;
+        renderTags();
+      };
+
       function renderChecklist(focusIndex) {
-        checklistWrap.innerHTML = '';
+        clearChildren(checklistWrap);
         if (!state.items.length) {
           state.items.push({ text: '', checked: false });
         }
@@ -720,6 +927,7 @@ const QUICK_NOTE_HTML: &str = r#"<!DOCTYPE html>
         hintEl.textContent = DEFAULT_HINT;
         hintEl.className = 'hint';
         refreshDraftBadge();
+        renderTags();
         requestResize();
         setTimeout(function () {
           if (state.isChecklist) {
@@ -764,12 +972,12 @@ const QUICK_NOTE_HTML: &str = r#"<!DOCTYPE html>
           state.pinned = !!d.pinned;
           btnPin.classList.toggle('active', state.pinned);
           state.tags = Array.isArray(d.tags) ? d.tags : [];
-          renderTags();
           if (state.tags.length) {
             state.tagsOpen = true;
             btnTags.classList.add('active');
             tagsBar.classList.add('visible');
           }
+          renderTags();
           applyColor(d.colorId || 'default');
           if (d.isChecklist) {
             state.items = Array.isArray(d.items) && d.items.length ? d.items : [{ text: '', checked: false }];
@@ -818,7 +1026,7 @@ const QUICK_NOTE_HTML: &str = r#"<!DOCTYPE html>
             pinned: state.pinned,
             tags: state.tags
           });
-        }, 220);
+        }, 160);
       }
 
       function closeModal() {
@@ -844,10 +1052,15 @@ const QUICK_NOTE_HTML: &str = r#"<!DOCTYPE html>
 
       btnTags.addEventListener('click', function () {
         state.tagsOpen = !state.tagsOpen;
-        btnTags.classList.toggle('active', state.tagsOpen);
+        btnTags.classList.toggle('active', state.tagsOpen || state.tags.length > 0);
         tagsBar.classList.toggle('visible', state.tagsOpen);
+        renderTags();
         requestResize();
         if (state.tagsOpen) tagInput.focus();
+      });
+
+      tagInput.addEventListener('input', function () {
+        renderTags();
       });
 
       tagInput.addEventListener('keydown', function (e) {
@@ -856,7 +1069,6 @@ const QUICK_NOTE_HTML: &str = r#"<!DOCTYPE html>
           addTagFromInput();
         }
       });
-      tagInput.addEventListener('blur', addTagFromInput);
 
       bodyEl.addEventListener('input', requestResize);
 
@@ -903,6 +1115,7 @@ const QUICK_NOTE_HTML: &str = r#"<!DOCTYPE html>
 
       window.addEventListener('DOMContentLoaded', function () {
         refreshDraftBadge();
+        renderTags();
         bodyEl.focus();
       });
     })();
@@ -942,6 +1155,97 @@ enum QuickNoteIpc {
     },
 }
 
+const EXTRACT_KEEP_LABELS_JS: &str = r####"(function () {
+  try {
+    if (
+      window.location.hostname !== 'keep.google.com' ||
+      document.readyState !== 'complete' ||
+      (!document.querySelector('[role="navigation"]') && !document.querySelector('.IZ65Hb-n0tgWb'))
+    ) {
+      return null;
+    }
+    var seen = Object.create(null);
+    var out = [];
+    var sysBlocked = {
+      'notas': 1, 'notes': 1,
+      'lembretes': 1, 'reminders': 1,
+      'editar marcadores': 1, 'edit labels': 1,
+      'arquivo': 1, 'archive': 1,
+      'lixeira': 1, 'trash': 1,
+      'bin': 1,
+      'marcadores': 1, 'labels': 1,
+      'configurações': 1, 'settings': 1,
+      'ajuda e feedback': 1, 'help & feedback': 1,
+      'enviar feedback': 1, 'send feedback': 1,
+      'atalhos do teclado': 1, 'keyboard shortcuts': 1,
+      'downloads de aplicativos': 1, 'app downloads': 1,
+      'criar novo marcador': 1, 'create new label': 1
+    };
+
+    function addLabel(raw) {
+      var name = String(raw || '').replace(/\s+/g, ' ').trim();
+      if (!name || name.length > 80) return;
+      var key = name.toLowerCase();
+      if (sysBlocked[key] || seen[key]) return;
+      seen[key] = 1;
+      out.push(name);
+    }
+
+    var labelLinks = document.querySelectorAll('a[href*="#label/"]');
+    for (var i = 0; i < labelLinks.length; i++) {
+      var a = labelLinks[i];
+      var txt = (a.innerText || a.textContent || '').trim();
+      if (!txt) {
+        var href = a.getAttribute('href') || '';
+        var idx = href.indexOf('#label/');
+        if (idx !== -1) {
+          try {
+            txt = decodeURIComponent(href.slice(idx + 7).split(/[?#]/)[0]);
+          } catch (_) {}
+        }
+      }
+      addLabel(txt);
+    }
+
+    var nav = document.querySelector('[role="navigation"]');
+    if (nav) {
+      var navItems = nav.querySelectorAll('[role="menuitem"], a[href], div[tabindex="0"]');
+      for (var j = 0; j < navItems.length; j++) {
+        var el = navItems[j];
+        var h = (el.getAttribute('href') || '').toLowerCase();
+        if (h && (h.endsWith('#home') || h.endsWith('#reminders') || h.endsWith('#archive') || h.endsWith('#trash'))) {
+          continue;
+        }
+        if (el.closest('[role="dialog"]')) continue;
+        var itemTxt = (el.innerText || el.textContent || '').trim();
+        var aria = (el.getAttribute('aria-label') || '').trim();
+        if (itemTxt && itemTxt.indexOf('\n') === -1) {
+          addLabel(itemTxt);
+        } else if (aria && aria.indexOf('\n') === -1 && aria.toLowerCase().indexOf('menu') === -1) {
+          addLabel(aria);
+        }
+      }
+    }
+
+    var removeBtns = document.querySelectorAll('[aria-label*="Remover marcador" i], [aria-label*="Remove label" i]');
+    for (var k = 0; k < removeBtns.length; k++) {
+      var al = removeBtns[k].getAttribute('aria-label') || '';
+      var cleaned = al
+        .replace(/^remover marcador\s*/i, '')
+        .replace(/^remove label\s*/i, '')
+        .trim();
+      if (cleaned) addLabel(cleaned);
+    }
+
+    out.sort(function (a, b) {
+      return a.localeCompare(b, undefined, { sensitivity: 'base' });
+    });
+    return out;
+  } catch (_) {
+    return [];
+  }
+})()"####;
+
 fn build_submit_note_js(
     title: &str,
     body: &str,
@@ -966,7 +1270,8 @@ fn build_submit_note_js(
     format!(
         r#"(function (cfg) {{
   var attempts = 0;
-  var maxAttempts = 50;
+  var maxAttempts = 60;
+  var expandSent = false;
 
   function isNotHiddenByStyle(el) {{
     if (!el) return false;
@@ -977,6 +1282,45 @@ fn build_submit_note_js(
       cur = cur.parentElement;
     }}
     return true;
+  }}
+
+  function dispatchClick(el) {{
+    if (!el) return;
+    try {{
+      el.dispatchEvent(new PointerEvent('pointerdown', {{ bubbles: true, cancelable: true }}));
+    }} catch (_) {{}}
+    try {{
+      el.dispatchEvent(new MouseEvent('mousedown', {{ bubbles: true, cancelable: true, view: window }}));
+    }} catch (_) {{}}
+    try {{
+      el.dispatchEvent(new PointerEvent('pointerup', {{ bubbles: true, cancelable: true }}));
+    }} catch (_) {{}}
+    try {{
+      el.dispatchEvent(new MouseEvent('mouseup', {{ bubbles: true, cancelable: true, view: window }}));
+    }} catch (_) {{}}
+    try {{
+      el.click();
+    }} catch (_) {{}}
+  }}
+
+  function setNativeInputValue(input, value) {{
+    try {{
+      var desc = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value');
+      if (desc && desc.set) {{
+        desc.set.call(input, value);
+      }} else {{
+        input.value = value;
+      }}
+    }} catch (_) {{
+      input.value = value;
+    }}
+    try {{
+      input.dispatchEvent(new InputEvent('input', {{ bubbles: true, inputType: 'insertText', data: value }}));
+    }} catch (_) {{
+      input.dispatchEvent(new Event('input', {{ bubbles: true }}));
+    }}
+    input.dispatchEvent(new KeyboardEvent('keyup', {{ key: ' ', bubbles: true }}));
+    input.dispatchEvent(new Event('change', {{ bubbles: true }}));
   }}
 
   function findButtonByLabels(root, patterns) {{
@@ -996,12 +1340,12 @@ fn build_submit_note_js(
     return null;
   }}
 
-  function findCollapsedOrBodyComposer() {{
+  function findCollapsedComposerTrigger() {{
     var selectors = [
+      'div[aria-label="Criar uma nota..."]',
+      'div[aria-label="Take a note..."]',
       'div[role="textbox"][aria-label*="Criar uma nota" i]',
-      'div[role="textbox"][aria-label*="Take a note" i]',
-      '[aria-label="Criar uma nota..."]',
-      '[aria-label="Take a note..."]'
+      'div[role="textbox"][aria-label*="Take a note" i]'
     ];
     for (var s = 0; s < selectors.length; s++) {{
       var list = document.querySelectorAll(selectors[s]);
@@ -1011,56 +1355,53 @@ fn build_submit_note_js(
         }}
       }}
     }}
-    var boxes = document.querySelectorAll('div[role="textbox"][contenteditable="true"]');
-    for (var j = 0; j < boxes.length; j++) {{
-      if (!boxes[j].closest('[role="dialog"]') && isNotHiddenByStyle(boxes[j])) {{
-        return boxes[j];
-      }}
-    }}
     return null;
   }}
 
-  function findComposerRoot(refEl) {{
-    var cur = refEl;
-    for (var d = 0; d < 8 && cur; d++) {{
-      if (findButtonByLabels(cur, ['fechar', 'close', 'cerrar', 'fermer'])) {{
-        return cur;
-      }}
-      cur = cur.parentElement;
-    }}
-    return document;
-  }}
+  function findExpandedComposer() {{
+    var closeNodes = document.querySelectorAll('[role="button"], button');
+    for (var c = 0; c < closeNodes.length; c++) {{
+      var btn = closeNodes[c];
+      if (btn.closest('[role="dialog"]')) continue;
+      var al = (btn.getAttribute('aria-label') || '').toLowerCase();
+      var tt = (btn.getAttribute('data-tooltip') || '').toLowerCase();
+      var tx = (btn.textContent || '').trim().toLowerCase();
+      var isClose = tx === 'fechar' || tx === 'close' || tx === 'cerrar' || tx === 'fermer'
+        || al === 'fechar' || al === 'close' || tt === 'fechar' || tt === 'close';
+      if (!isClose || !isNotHiddenByStyle(btn)) continue;
 
-  function findTitleBox() {{
-    var list = document.querySelectorAll(
-      'div[role="textbox"][aria-label*="Título" i], div[role="textbox"][aria-label*="Title" i]'
-    );
-    for (var i = 0; i < list.length; i++) {{
-      if (!list[i].closest('[role="dialog"]') && isNotHiddenByStyle(list[i])) {{
-        return list[i];
-      }}
-    }}
-    return null;
-  }}
-
-  function findBodyBox(titleBox) {{
-    var list = document.querySelectorAll(
-      'div[role="textbox"][aria-label*="Criar uma nota" i], div[role="textbox"][aria-label*="Take a note" i]'
-    );
-    for (var i = 0; i < list.length; i++) {{
-      if (!list[i].closest('[role="dialog"]') && isNotHiddenByStyle(list[i])) {{
-        return list[i];
-      }}
-    }}
-    if (titleBox) {{
-      var root = titleBox.closest('div[tabindex]') || (titleBox.parentElement && titleBox.parentElement.parentElement && titleBox.parentElement.parentElement.parentElement);
-      if (root) {{
-        var boxes = root.querySelectorAll('div[role="textbox"][contenteditable="true"]');
-        for (var j = 0; j < boxes.length; j++) {{
-          if (boxes[j] !== titleBox && isNotHiddenByStyle(boxes[j])) {{
-            return boxes[j];
+      var cur = btn.parentElement;
+      for (var d = 0; d < 8 && cur && cur !== document.body; d++) {{
+        var boxes = cur.querySelectorAll('div[role="textbox"][contenteditable="true"]');
+        var visibleBoxes = [];
+        for (var b = 0; b < boxes.length; b++) {{
+          if (!boxes[b].closest('[role="dialog"]') && isNotHiddenByStyle(boxes[b])) {{
+            visibleBoxes.push(boxes[b]);
           }}
         }}
+        if (visibleBoxes.length >= 2) {{
+          var titleBox = null;
+          var bodyBox = null;
+          for (var i = 0; i < visibleBoxes.length; i++) {{
+            var bal = (visibleBoxes[i].getAttribute('aria-label') || '').toLowerCase();
+            if (!titleBox && (bal.indexOf('título') !== -1 || bal.indexOf('titulo') !== -1 || bal.indexOf('title') !== -1)) {{
+              titleBox = visibleBoxes[i];
+            }} else if (!bodyBox) {{
+              bodyBox = visibleBoxes[i];
+            }}
+          }}
+          if (!titleBox) titleBox = visibleBoxes[0];
+          if (!bodyBox || bodyBox === titleBox) {{
+            for (var j = 0; j < visibleBoxes.length; j++) {{
+              if (visibleBoxes[j] !== titleBox) {{
+                bodyBox = visibleBoxes[j];
+                break;
+              }}
+            }}
+          }}
+          return {{ root: cur, titleBox: titleBox, bodyBox: bodyBox, closeBtn: btn }};
+        }}
+        cur = cur.parentElement;
       }}
     }}
     return null;
@@ -1069,31 +1410,113 @@ fn build_submit_note_js(
   function insertIntoEditable(el, value) {{
     if (!el || !value) return;
     el.focus();
+    var normalizedExpected = String(value).replace(/\r/g, '');
+    var probe = normalizedExpected.slice(0, Math.min(20, normalizedExpected.length));
+
     try {{
       var sel = window.getSelection();
       var range = document.createRange();
       range.selectNodeContents(el);
       sel.removeAllRanges();
       sel.addRange(range);
-      if (document.execCommand('insertText', false, value) && (el.textContent || '').length > 0) {{
+      if (typeof document.execCommand === 'function') {{
+        document.execCommand('selectAll', false, null);
+        var ok = document.execCommand('insertText', false, value);
+        var got = (el.innerText || el.textContent || '').replace(/\r/g, '');
+        if (ok && (!probe || got.indexOf(probe) !== -1)) {{
+          el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+          return;
+        }}
+      }}
+    }} catch (_) {{}}
+
+    try {{
+      var dt = new DataTransfer();
+      dt.setData('text/plain', value);
+      el.dispatchEvent(new ClipboardEvent('paste', {{
+        bubbles: true,
+        cancelable: true,
+        clipboardData: dt
+      }}));
+      var gotPaste = (el.innerText || el.textContent || '').replace(/\r/g, '');
+      if (!probe || gotPaste.indexOf(probe) !== -1) {{
+        el.dispatchEvent(new Event('change', {{ bubbles: true }}));
         return;
       }}
-    }} catch (e) {{}}
+    }} catch (_) {{}}
 
-    el.textContent = value;
+    while (el.firstChild) {{
+      el.removeChild(el.firstChild);
+    }}
+    var lines = String(value).replace(/\r\n/g, '\n').split('\n');
+    for (var i = 0; i < lines.length; i++) {{
+      if (i > 0) {{
+        el.appendChild(document.createElement('br'));
+      }}
+      if (lines[i].length > 0) {{
+        el.appendChild(document.createTextNode(lines[i]));
+      }}
+    }}
     try {{
-      el.dispatchEvent(new InputEvent('input', {{ bubbles: true, inputType: 'insertText', data: value }}));
-    }} catch (e) {{
+      el.dispatchEvent(new InputEvent('beforeinput', {{
+        bubbles: true,
+        cancelable: true,
+        inputType: 'insertText',
+        data: value
+      }}));
+    }} catch (_) {{}}
+    try {{
+      el.dispatchEvent(new InputEvent('input', {{
+        bubbles: true,
+        inputType: 'insertText',
+        data: value
+      }}));
+    }} catch (_) {{
       el.dispatchEvent(new Event('input', {{ bubbles: true }}));
     }}
+    el.dispatchEvent(new KeyboardEvent('keydown', {{ key: ' ', code: 'Space', bubbles: true }}));
+    el.dispatchEvent(new KeyboardEvent('keyup', {{ key: ' ', code: 'Space', bubbles: true }}));
     el.dispatchEvent(new Event('change', {{ bubbles: true }}));
   }}
 
-  function applyColorAndPinAndClose(root, refEl) {{
+  function findCreateLabelButton(tagName) {{
+    var target = tagName.toLowerCase();
+    var candidates = document.querySelectorAll('[role="menuitem"], [role="button"], div[tabindex="0"], li');
+    for (var i = 0; i < candidates.length; i++) {{
+      var el = candidates[i];
+      if (!isNotHiddenByStyle(el)) continue;
+      var txt = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+      if (!txt) continue;
+      if ((txt.indexOf('criar ') === 0 || txt.indexOf('create ') === 0) && txt.indexOf(target) !== -1) {{
+        return el;
+      }}
+    }}
+    return null;
+  }}
+
+  function applyColorAndPinAndClose(comp) {{
+    var root = comp.root;
+    var refEl = comp.bodyBox || comp.titleBox;
+
     if (cfg.pinned) {{
       var pinBtn = findButtonByLabels(root, ['fixar nota', 'pin note']);
       if (pinBtn && pinBtn.getAttribute('aria-pressed') !== 'true') {{
-        pinBtn.click();
+        dispatchClick(pinBtn);
+      }}
+    }}
+
+    function finishClose() {{
+      var closeBtn = findButtonByLabels(root, ['fechar', 'close', 'cerrar', 'fermer']) || comp.closeBtn;
+      if (closeBtn && isNotHiddenByStyle(closeBtn)) {{
+        dispatchClick(closeBtn);
+        setTimeout(function () {{
+          if (findExpandedComposer()) {{
+            dispatchClick(closeBtn);
+          }}
+        }}, 260);
+      }} else if (refEl) {{
+        refEl.blur();
+        dispatchClick(document.body);
       }}
     }}
 
@@ -1101,85 +1524,155 @@ fn build_submit_note_js(
       if (cfg.tags && cfg.tags.length > 0) {{
         var moreBtn = findButtonByLabels(root, ['mais', 'more']);
         if (moreBtn) {{
-          moreBtn.click();
+          dispatchClick(moreBtn);
           setTimeout(function () {{
             var addLabelItem = findButtonByLabels(document, ['adicionar marcador', 'alterar marcadores', 'add label', 'change labels']);
             if (addLabelItem) {{
-              addLabelItem.click();
+              dispatchClick(addLabelItem);
               setTimeout(function () {{
                 var idx = 0;
                 function nextTag() {{
                   if (idx >= cfg.tags.length) {{
-                    setTimeout(finishClose, 160);
+                    if (refEl) dispatchClick(refEl);
+                    setTimeout(finishClose, 180);
                     return;
                   }}
-                  var t = cfg.tags[idx++];
-                  var searchInput = document.querySelector('input[aria-label*="marcador" i], input[aria-label*="label" i], input[placeholder*="marcador" i], input[placeholder*="label" i]');
-                  if (searchInput) {{
+                  var t = String(cfg.tags[idx++] || '').trim();
+                  if (!t) {{
+                    nextTag();
+                    return;
+                  }}
+                  var searchInput = document.querySelector(
+                    'input[aria-label*="marcador" i], input[aria-label*="label" i], input[placeholder*="marcador" i], input[placeholder*="label" i]'
+                  );
+                  if (searchInput && isNotHiddenByStyle(searchInput)) {{
                     searchInput.focus();
-                    searchInput.value = t;
-                    searchInput.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                    setNativeInputValue(searchInput, t);
                     setTimeout(function () {{
                       var cbs = document.querySelectorAll('[role="menuitemcheckbox"], [role="checkbox"]');
                       var clicked = false;
+                      var exactTarget = t.toLowerCase();
                       for (var k = 0; k < cbs.length; k++) {{
-                        var labelTxt = (cbs[k].textContent || '').trim().toLowerCase();
-                        if (labelTxt === t.toLowerCase() || labelTxt.indexOf(t.toLowerCase()) !== -1) {{
-                          if (cbs[k].getAttribute('aria-checked') !== 'true') cbs[k].click();
+                        if (!isNotHiddenByStyle(cbs[k])) continue;
+                        var labelTxt = (cbs[k].innerText || cbs[k].textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+                        if (labelTxt === exactTarget) {{
+                          if (cbs[k].getAttribute('aria-checked') !== 'true') {{
+                            dispatchClick(cbs[k]);
+                          }}
                           clicked = true;
                           break;
                         }}
                       }}
                       if (!clicked) {{
-                        var createBtn = findButtonByLabels(document, ['criar "' + t.toLowerCase() + '"', 'create "' + t.toLowerCase() + '"', 'criar marcador', 'create label']);
-                        if (createBtn) createBtn.click();
+                        var createBtn = findCreateLabelButton(t);
+                        if (createBtn) {{
+                          dispatchClick(createBtn);
+                        }}
                       }}
-                      setTimeout(nextTag, 120);
-                    }}, 120);
+                      setTimeout(function () {{
+                        setNativeInputValue(searchInput, '');
+                        setTimeout(nextTag, 140);
+                      }}, 160);
+                    }}, 180);
                   }} else {{
-                    setTimeout(finishClose, 150);
+                    setTimeout(finishClose, 180);
                   }}
                 }}
                 nextTag();
-              }}, 150);
+              }}, 200);
               return;
             }}
-            setTimeout(finishClose, 150);
-          }}, 150);
+            setTimeout(finishClose, 180);
+          }}, 200);
           return;
         }}
       }}
       finishClose();
     }}
 
-    function finishClose() {{
-      var closeBtn = findButtonByLabels(root, ['fechar', 'close', 'cerrar', 'fermer']);
-      if (closeBtn) {{
-        closeBtn.click();
-      }} else if (refEl) {{
-        refEl.blur();
-        document.body.click();
-      }}
-    }}
-
     if (cfg.colorLabels && cfg.colorLabels.length > 0) {{
       var colorBtn = findButtonByLabels(root, ['opções de plano de fundo', 'background options', 'alterar cor', 'change color']);
       if (colorBtn) {{
-        colorBtn.click();
+        dispatchClick(colorBtn);
         setTimeout(function () {{
           var swatch = findButtonByLabels(document, cfg.colorLabels);
-          if (swatch) swatch.click();
-          setTimeout(doTagsAndClose, 150);
-        }}, 140);
+          if (swatch) dispatchClick(swatch);
+          setTimeout(doTagsAndClose, 180);
+        }}, 180);
         return;
       }}
     }}
-    setTimeout(doTagsAndClose, 120);
+    setTimeout(doTagsAndClose, 140);
+  }}
+
+  function populateChecklistItems(comp) {{
+    var titleBox = comp.titleBox;
+    var cleanTitle = (cfg.title || '').trim();
+    if (cleanTitle && titleBox) {{
+      insertIntoEditable(titleBox, cleanTitle);
+    }}
+
+    var idx = 0;
+    function insertNextItem(retryCount) {{
+      if (idx >= cfg.items.length) {{
+        setTimeout(function () {{
+          var latest = findExpandedComposer() || comp;
+          applyColorAndPinAndClose(latest);
+        }}, 200);
+        return;
+      }}
+
+      var item = cfg.items[idx];
+      var inputs = comp.root.querySelectorAll('div[role="textbox"][contenteditable="true"]');
+      var targetInput = null;
+      var lastInput = null;
+      for (var i = 0; i < inputs.length; i++) {{
+        if (!inputs[i].closest('[role="dialog"]') && inputs[i] !== titleBox && isNotHiddenByStyle(inputs[i])) {{
+          lastInput = inputs[i];
+          if (!(inputs[i].textContent || '').trim()) {{
+            targetInput = inputs[i];
+            break;
+          }}
+        }}
+      }}
+
+      if (!targetInput && (retryCount || 0) < 4) {{
+        if (lastInput) {{
+          lastInput.focus();
+          lastInput.dispatchEvent(new KeyboardEvent('keydown', {{ key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }}));
+          lastInput.dispatchEvent(new KeyboardEvent('keyup', {{ key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }}));
+        }}
+        setTimeout(function () {{ insertNextItem((retryCount || 0) + 1); }}, 110);
+        return;
+      }}
+
+      idx++;
+      if (targetInput) {{
+        insertIntoEditable(targetInput, item.text);
+        if (item.checked) {{
+          var row = targetInput.closest('[role="listitem"]') || (targetInput.parentElement && targetInput.parentElement.parentElement);
+          var cb = row && row.querySelector('[role="checkbox"]');
+          if (cb && cb.getAttribute('aria-checked') !== 'true') {{
+            dispatchClick(cb);
+          }}
+        }}
+        targetInput.dispatchEvent(new KeyboardEvent('keydown', {{ key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }}));
+        targetInput.dispatchEvent(new KeyboardEvent('keyup', {{ key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }}));
+      }}
+      setTimeout(function () {{ insertNextItem(0); }}, 100);
+    }}
+
+    setTimeout(function () {{ insertNextItem(0); }}, 140);
   }}
 
   function step() {{
     attempts++;
     if (attempts > maxAttempts) return;
+
+    if (document.readyState !== 'complete') {{
+      setTimeout(step, 200);
+      return;
+    }}
 
     var openDialog = document.querySelector('[role="dialog"]');
     if (openDialog) {{
@@ -1192,77 +1685,36 @@ fn build_submit_note_js(
           bubbles: true
         }})
       );
-      setTimeout(step, 200);
+      setTimeout(step, 220);
       return;
     }}
 
     if (window.location.hash && window.location.hash !== '#home') {{
       window.location.hash = '#home';
-      setTimeout(step, 250);
+      expandSent = false;
+      setTimeout(step, 350);
       return;
     }}
 
-    if (cfg.isChecklist && cfg.items && cfg.items.length > 0) {{
-      var newListBtn = findButtonByLabels(document, ['nova lista', 'new list']);
-      if (newListBtn) {{
-        newListBtn.click();
-        setTimeout(function () {{
-          var titleBox = findTitleBox();
-          var cleanTitle = (cfg.title || '').trim();
-          if (cleanTitle && titleBox) {{
-            insertIntoEditable(titleBox, cleanTitle);
+    var comp = findExpandedComposer();
+    if (comp) {{
+      if (cfg.isChecklist && cfg.items && cfg.items.length > 0) {{
+        var hasCheckboxes = !!comp.root.querySelector('[role="checkbox"]');
+        if (!hasCheckboxes) {{
+          var moreBtn = findButtonByLabels(comp.root, ['mais', 'more']);
+          if (moreBtn) {{
+            dispatchClick(moreBtn);
+            setTimeout(function () {{
+              var showCb = findButtonByLabels(document, ['mostrar caixas de seleção', 'show checkboxes']);
+              if (showCb) dispatchClick(showCb);
+              setTimeout(function () {{
+                populateChecklistItems(findExpandedComposer() || comp);
+              }}, 180);
+            }}, 160);
+            return;
           }}
-          var idx = 0;
-          function insertNextItem() {{
-            if (idx >= cfg.items.length) {{
-              var root = findComposerRoot(titleBox || document.activeElement);
-              setTimeout(function () {{ applyColorAndPinAndClose(root, titleBox); }}, 180);
-              return;
-            }}
-            var item = cfg.items[idx++];
-            var inputs = document.querySelectorAll('div[role="textbox"][aria-label*="Item da lista" i], div[role="textbox"][aria-label*="List item" i], div[role="textbox"][contenteditable="true"]');
-            var targetInput = null;
-            for (var i = inputs.length - 1; i >= 0; i--) {{
-              if (!inputs[i].closest('[role="dialog"]') && inputs[i] !== titleBox && isNotHiddenByStyle(inputs[i])) {{
-                if (!(inputs[i].textContent || '').trim()) {{
-                  targetInput = inputs[i];
-                  break;
-                }}
-              }}
-            }}
-            if (targetInput) {{
-              insertIntoEditable(targetInput, item.text);
-              targetInput.dispatchEvent(new KeyboardEvent('keydown', {{ key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }}));
-              if (item.checked) {{
-                var row = targetInput.parentElement && targetInput.parentElement.parentElement;
-                var cb = row && row.querySelector('[role="checkbox"]');
-                if (cb && cb.getAttribute('aria-checked') !== 'true') cb.click();
-              }}
-            }}
-            setTimeout(insertNextItem, 75);
-          }}
-          setTimeout(insertNextItem, 120);
-        }}, 180);
-        return;
-      }}
-    }}
-
-    var box = findCollapsedOrBodyComposer();
-    if (!box) {{
-      setTimeout(step, 200);
-      return;
-    }}
-
-    box.dispatchEvent(new MouseEvent('mousedown', {{ bubbles: true }}));
-    box.click();
-    box.focus();
-
-    setTimeout(function () {{
-      var titleBox = findTitleBox();
-      var bodyBox = findBodyBox(titleBox) || findCollapsedOrBodyComposer();
-
-      if (!bodyBox && !titleBox) {{
-        setTimeout(step, 200);
+        }}
+        populateChecklistItems(comp);
         return;
       }}
 
@@ -1271,21 +1723,55 @@ fn build_submit_note_js(
         ? cfg.items.map(function (i) {{ return i.text; }}).join('\n')
         : (cfg.body || '').trimEnd();
 
-      if (cleanTitle && titleBox) {{
-        insertIntoEditable(titleBox, cleanTitle);
+      if (cleanTitle && comp.titleBox) {{
+        insertIntoEditable(comp.titleBox, cleanTitle);
       }}
-      if (cleanBody && bodyBox) {{
-        insertIntoEditable(bodyBox, cleanBody);
-      }} else if (cleanTitle && !titleBox && bodyBox) {{
-        insertIntoEditable(bodyBox, cleanTitle);
+      if (cleanBody && comp.bodyBox) {{
+        insertIntoEditable(comp.bodyBox, cleanBody);
+      }} else if (cleanTitle && !comp.titleBox && comp.bodyBox) {{
+        insertIntoEditable(comp.bodyBox, cleanTitle);
       }}
 
-      var refEl = bodyBox || titleBox;
-      var root = findComposerRoot(refEl);
       setTimeout(function () {{
-        applyColorAndPinAndClose(root, refEl);
-      }}, 200);
-    }}, 170);
+        applyColorAndPinAndClose(comp);
+      }}, 220);
+      return;
+    }}
+
+    if (cfg.isChecklist && cfg.items && cfg.items.length > 0) {{
+      var newListBtn = findButtonByLabels(document, ['nova lista', 'new list']);
+      if (newListBtn) {{
+        dispatchClick(newListBtn);
+        setTimeout(step, 220);
+        return;
+      }}
+    }}
+
+    var trigger = findCollapsedComposerTrigger();
+    if (trigger) {{
+      dispatchClick(trigger);
+      trigger.focus();
+      if (expandSent) {{
+        document.body.dispatchEvent(new KeyboardEvent('keydown', {{
+          key: 'c',
+          code: 'KeyC',
+          keyCode: 67,
+          which: 67,
+          bubbles: true
+        }}));
+      }}
+      expandSent = true;
+    }} else if (!expandSent) {{
+      document.body.dispatchEvent(new KeyboardEvent('keydown', {{
+        key: 'c',
+        code: 'KeyC',
+        keyCode: 67,
+        which: 67,
+        bubbles: true
+      }}));
+      expandSent = true;
+    }}
+    setTimeout(step, 220);
   }}
 
   step();
@@ -1439,7 +1925,9 @@ fn build_main_ui_js(theme_preset: &str, compact_mode: bool, filter_bar: bool) ->
     }}
 
     function renderBar() {{
-      bar.innerHTML = '';
+      while (bar.firstChild) {{
+        bar.removeChild(bar.firstChild);
+      }}
       bar.classList.toggle('collapsed', filterState.collapsed);
 
       if (filterState.collapsed) {{
@@ -1532,10 +2020,12 @@ fn build_main_ui_js(theme_preset: &str, compact_mode: bool, filter_bar: bool) ->
     if (!bar.dataset.kdObserved) {{
       bar.dataset.kdObserved = '1';
       var timer = null;
-      var obs = new MutationObserver(function () {{
-        if (filterState.mode === 'all' && !filterState.query.trim()) return;
+      var obs = new MutationObserver(function (mutations) {{
+        for (var i = 0; i < mutations.length; i++) {{
+          if (bar.contains(mutations[i].target)) return;
+        }}
         clearTimeout(timer);
-        timer = setTimeout(applyFilter, 250);
+        timer = setTimeout(applyFilter, 300);
       }});
       obs.observe(document.body, {{ childList: true, subtree: true }});
     }}
@@ -1581,6 +2071,7 @@ impl Default for AppConfig {
 struct AppState {
     config: Mutex<AppConfig>,
     config_path: PathBuf,
+    cached_labels: Mutex<Vec<String>>,
 }
 
 thread_local! {
@@ -1738,6 +2229,55 @@ fn hide_quick_note(app: &AppHandle, clear: bool) {
     }
 }
 
+fn push_labels_to_quick_note(app: &AppHandle, labels: &[String]) {
+    if let Some(qn_win) = app.get_window("quick-note") {
+        let json = serde_json::to_string(labels).unwrap_or_else(|_| "[]".to_string());
+        with_quick_note_webview(&qn_win, move |wv| {
+            let js = format!("window.setAvailableLabels && window.setAvailableLabels({json});");
+            let _ = wv.evaluate_script(&js);
+        });
+    }
+}
+
+fn sync_keep_labels(app: &AppHandle) {
+    if let Some(main_win) = app.get_window("main") {
+        let app_handle = app.clone();
+        with_keep_webview(&main_win, move |wv| {
+            if let Ok(url) = wv.url() {
+                if !url.contains("keep.google.com") || url.contains("accounts.google.com") {
+                    return;
+                }
+            }
+            let cb_app = app_handle.clone();
+            let _ = wv.evaluate_script_with_callback(EXTRACT_KEEP_LABELS_JS, move |raw| {
+                if raw.trim() == "null" || raw.trim().is_empty() {
+                    return;
+                }
+                let parsed_opt: Option<Vec<String>> =
+                    serde_json::from_str::<Vec<String>>(&raw).ok().or_else(|| {
+                        serde_json::from_str::<String>(&raw)
+                            .ok()
+                            .and_then(|inner| serde_json::from_str::<Vec<String>>(&inner).ok())
+                    });
+                let Some(parsed) = parsed_opt else {
+                    return;
+                };
+                let target_app = cb_app.clone();
+                let _ = cb_app.run_on_main_thread(move || {
+                    let state = target_app.state::<AppState>();
+                    let latest = if let Ok(mut cached) = state.cached_labels.lock() {
+                        *cached = parsed;
+                        cached.clone()
+                    } else {
+                        parsed
+                    };
+                    push_labels_to_quick_note(&target_app, &latest);
+                });
+            });
+        });
+    }
+}
+
 fn trigger_quick_note(app: &AppHandle) {
     if let Some(qn_win) = app.get_window("quick-note") {
         let is_visible = qn_win.is_visible().unwrap_or(false);
@@ -1746,6 +2286,15 @@ fn trigger_quick_note(app: &AppHandle) {
             hide_quick_note(app, true);
             return;
         }
+        let cached = app
+            .state::<AppState>()
+            .cached_labels
+            .lock()
+            .map(|l| l.clone())
+            .unwrap_or_default();
+        push_labels_to_quick_note(app, &cached);
+        sync_keep_labels(app);
+
         let _ = qn_win.center();
         let _ = qn_win.show();
         let _ = qn_win.unminimize();
@@ -1771,9 +2320,26 @@ fn submit_quick_note_to_keep(
     if title.trim().is_empty() && body.trim().is_empty() && !has_items {
         return;
     }
+    if !tags.is_empty() {
+        let state = app.state::<AppState>();
+        if let Ok(mut cached) = state.cached_labels.lock() {
+            for t in &tags {
+                let clean = t.trim();
+                if !clean.is_empty()
+                    && !cached
+                        .iter()
+                        .any(|existing| existing.eq_ignore_ascii_case(clean))
+                {
+                    cached.push(clean.to_string());
+                }
+            }
+            cached.sort_by_key(|a| a.to_lowercase());
+        };
+    }
     hide_quick_note(app, true);
     if let Some(main_win) = app.get_window("main") {
         let main_win_clone = main_win.clone();
+        let refresh_app = app.clone();
         with_keep_webview(&main_win, move |wv| {
             if let Ok(url) = wv.url() {
                 if url.contains("accounts.google.com") {
@@ -1791,6 +2357,13 @@ fn submit_quick_note_to_keep(
                 &tags,
             );
             let _ = wv.evaluate_script(&script);
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(2200));
+                let app_inner = refresh_app.clone();
+                let _ = refresh_app.run_on_main_thread(move || {
+                    sync_keep_labels(&app_inner);
+                });
+            });
         });
     }
 }
@@ -2231,6 +2804,7 @@ fn main() {
             app.manage(AppState {
                 config: Mutex::new(initial_cfg),
                 config_path,
+                cached_labels: Mutex::new(Vec::new()),
             });
 
             // Registra Ctrl+K exclusivamente para abrir a janela rápida de nova nota
@@ -2330,6 +2904,15 @@ fn main() {
                                     let _ = wv.evaluate_script(&script);
                                 });
                             }
+                            sync_keep_labels(&page_load_app);
+                            let delayed_app = page_load_app.clone();
+                            std::thread::spawn(move || {
+                                std::thread::sleep(std::time::Duration::from_millis(1800));
+                                let app_inner = delayed_app.clone();
+                                let _ = delayed_app.run_on_main_thread(move || {
+                                    sync_keep_labels(&app_inner);
+                                });
+                            });
                         }
                     });
 
@@ -2339,7 +2922,7 @@ fn main() {
                     builder = builder
                         .with_theme(wry::Theme::Dark)
                         .with_additional_browser_args(
-                            "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,ServiceWorkerStaticRouter,ThirdPartyStoragePartitioning,TrackingProtection3pcd",
+                            "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,ServiceWorkerStaticRouter,ThirdPartyStoragePartitioning,TrackingProtection3pcd --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-renderer-backgrounding",
                         )
                         .with_url("about:blank");
                 }
@@ -2448,7 +3031,7 @@ fn main() {
                                 }
                                 QuickNoteIpc::Resize { height } => {
                                     if let Some(qn_win) = app_handle.get_window("quick-note") {
-                                        let h = height.clamp(320.0, 480.0);
+                                        let h = height.clamp(320.0, 560.0);
                                         let _ =
                                             qn_win.set_size(tauri::LogicalSize::new(480.0, h));
                                     }

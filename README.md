@@ -31,7 +31,7 @@ O objetivo do **Google Keep Desktop** é oferecer uma janela dedicada, discreta,
 
 ---
 
-## Recursos atuais (`v0.2.4`)
+## Recursos atuais (`v0.2.5`)
 
 <div align="center">
   <img src="docs/tray-menu.jpg" alt="Menu da bandeja do sistema (System Tray) do Google Keep Desktop" width="460" />
@@ -44,7 +44,7 @@ O objetivo do **Google Keep Desktop** é oferecer uma janela dedicada, discreta,
   - Fechar no `X` apenas oculta o app na bandeja, mantendo sua sessão do Google ativa e abertura instantânea.
 - **Atalho global de nota rápida (`Ctrl + K`)**:
   - `Ctrl + K` — Abre **apenas uma mini-janela flutuante** (com cantos arredondados nativos no Windows 11, arrastável pelo cabeçalho) sem abrir a janela principal do Keep.
-  - Suporta **seletor de cor** (paleta oficial Keep), **modo checklist** interativo, **fixar no topo**, **marcadores (`#tag`)**, **recuperação de rascunho** caso fechada com `Esc`, auto-expansão de altura e feedback visual de envio (`Ctrl + Enter` salva, `Esc` fecha).
+  - Suporta **seletor de cor** (paleta oficial Keep), **modo checklist** interativo, **fixar no topo**, **seletor de marcadores do Keep** (lista os marcadores existentes para marcar/filtrar e permite criar novos diretamente pelo atalho), **recuperação de rascunho** caso fechada com `Esc`, auto-expansão de altura e envio silencioso (`Ctrl + Enter` salva, `Esc` fecha).
 - **Personalização visual e filtros na janela principal (submenu *Aparência*)**:
   - **Temas**: *Padrão Keep*, *AMOLED (Preto puro)*, *Nord Escuro* e *Catppuccin Mocha*.
   - **Scrollbars escuras e finas** nativas e **Modo Compacto / Foco** (oculta atalhos web extras do Google e recolhe a barra lateral em janelas estreitas).
